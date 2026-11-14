@@ -1,0 +1,10 @@
+.git
+local-docs
+kotlin
+next/legacy
+**/node_modules
+**/.next
+**/.env*
+**/google-services.json
+**/*.jks
+**/*.keystore
