@@ -18,6 +18,7 @@ data class Habit(
     val counts: Map<String, Long> = emptyMap(),
     val order: Long = 0,
     val color: Int = 0,
+    val appliedOps: Set<String> = emptySet(),
 ) {
     fun count(day: String) = maxOf(counts[day] ?: 0, if (completions.contains(day)) 1L else 0L)
 
@@ -37,8 +38,15 @@ class LogItApp : Application() {
 
 object Store {
     lateinit var context: Context
-    var habits = listOf<Habit>()
-        private set
+    @Volatile private var baseHabits = listOf<Habit>()
+    val habits: List<Habit>
+        get() =
+            if (demo || !signedIn) baseHabits
+            else
+                OfflineLogQueue.project(
+                    baseHabits,
+                    OfflineLogQueue.operations(auth.currentUser!!.uid),
+                )
 
     var changed: (() -> Unit)? = null
     var error: ((String) -> Unit)? = null
@@ -64,7 +72,11 @@ object Store {
     fun init(c: Context) {
         context = c.applicationContext
         loadCache()
-        if (configured) auth.addAuthStateListener { listen() }
+        if (configured)
+            auth.addAuthStateListener {
+                listen()
+                OfflineLogQueue.schedule()
+            }
     }
 
     private fun key() =
@@ -72,7 +84,16 @@ object Store {
         else "cache_" + (if (signedIn) auth.currentUser!!.uid else "signed_out")
 
     private fun loadCache() {
-        habits = decode(prefs.getString(key(), "[]") ?: "[]")
+        baseHabits = decode(prefs.getString(key(), "[]") ?: "[]")
+    }
+
+    fun confirm(op: LogOp) {
+        baseHabits = baseHabits.map { h ->
+            if (h.id == op.habit && op.id !in h.appliedOps)
+                OfflineLogQueue.delta(h, op.day, op.delta).copy(appliedOps = h.appliedOps + op.id)
+            else h
+        }
+        save()
     }
 
     fun save() {
@@ -81,7 +102,7 @@ object Store {
             .putString(
                 key(),
                 JSONArray(
-                        habits.map { h ->
+                        baseHabits.map { h ->
                             JSONObject()
                                 .put("id", h.id)
                                 .put("name", h.name)
@@ -89,6 +110,7 @@ object Store {
                                 .put("dailyCounts", JSONObject(h.counts))
                                 .put("order", h.order)
                                 .put("color", h.color)
+                                .put("appliedOps", JSONArray(h.appliedOps.toList()))
                         }
                     )
                     .toString(),
@@ -113,6 +135,9 @@ object Store {
                         counts.keys().asSequence().associateWith { counts.optLong(it) },
                         o.optLong("order"),
                         o.optInt("color"),
+                        (o.optJSONArray("appliedOps") ?: JSONArray()).let { a ->
+                            (0 until a.length()).map { a.getString(it) }.toSet()
+                        },
                     )
                 }
                 .sortedBy { it.order }
@@ -126,7 +151,7 @@ object Store {
         loadCache()
         if (habits.isEmpty()) {
             val today = LocalDate.parse(Dates.today())
-            habits =
+            baseHabits =
                 listOf("Read", "Walk", "Meditate", "Practice").mapIndexed { i, n ->
                     val counts =
                         (0..111)
@@ -161,7 +186,7 @@ object Store {
                             return@addSnapshotListener
                         }
                         if (snap != null) {
-                            habits =
+                            baseHabits =
                                 snap.documents
                                     .map { d ->
                                         Habit(
@@ -179,6 +204,10 @@ object Store {
                                                 ?.toMap() ?: emptyMap(),
                                             d.getLong("order") ?: 0,
                                             (d.getLong("color") ?: 0).toInt(),
+                                            (d.get("logOps") as? Map<*, *>)
+                                                ?.keys
+                                                ?.filterIsInstance<String>()
+                                                ?.toSet() ?: emptySet(),
                                         )
                                     }
                                     .sortedBy { it.order }
@@ -190,7 +219,7 @@ object Store {
 
     fun add(name: String, done: (String?) -> Unit) {
         if (demo) {
-            habits =
+            baseHabits =
                 habits +
                     Habit(UUID.randomUUID().toString(), name, order = System.currentTimeMillis())
             save()
@@ -219,79 +248,37 @@ object Store {
             .addOnFailureListener { done(it.localizedMessage) }
     }
 
-    // Both clients use online transactions. Undo targets the date of the original log, even after
-    // midnight.
     fun log(id: String, delta: Int, day: String = Dates.today(), done: (String?) -> Unit) {
-        val h = habits.find { it.id == id }
-        if (h == null) {
-            done("Activity no longer exists")
-            return
-        }
+        val h =
+            habits.find { it.id == id }
+                ?: run {
+                    done("Activity no longer exists")
+                    return
+                }
         if (demo) {
-            val n = (h.count(day) + delta).coerceAtLeast(0)
-            val dates = if (n > 0) (h.completions + day).distinct() else h.completions - day
-            habits = habits.map {
-                if (it.id == id) it.copy(completions = dates, counts = it.counts + (day to n))
-                else it
+            baseHabits = habits.map {
+                if (it.id == id) OfflineLogQueue.delta(it, day, delta) else it
             }
             save()
             done(null)
             return
         }
         if (!signedIn) {
-            done("Sign in to log")
+            done("Sign in first")
             return
         }
-        val db = FirebaseFirestore.getInstance()
-        val ref = db.collection("habits").document(id)
-        db.runTransaction { tx ->
-                val d = tx.get(ref)
-                check(d.exists()) { "Activity no longer exists" }
-                check(d.getString("userId") == auth.currentUser!!.uid) {
-                    "Activity belongs to another account"
-                }
-                val dates =
-                    (d.get("completions") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                val counts = (d.get("dailyCounts") as? Map<*, *>) ?: emptyMap<Any, Any>()
-                val count =
-                    maxOf((counts[day] as? Number)?.toLong() ?: 0, if (day in dates) 1L else 0L)
-                val n = (count + delta).coerceAtLeast(0)
-                val nextDates = if (n > 0) (dates + day).distinct() else dates - day
-                val active =
-                    (nextDates +
-                            counts
-                                .filter { (k, v) ->
-                                    k != day && ((v as? Number)?.toLong() ?: 0) > 0
-                                }
-                                .keys
-                                .filterIsInstance<String>())
-                        .toSet()
-                var streak = 0
-                var cursor = LocalDate.parse(Dates.today())
-                while (cursor.toString() in active) {
-                    streak++
-                    cursor = cursor.minusDays(1)
-                }
-                tx.update(
-                    ref,
-                    mapOf(
-                        "dailyCounts.$day" to n,
-                        "completions" to nextDates,
-                        "currentStreak" to streak,
-                        "longestStreak" to maxOf(d.getLong("longestStreak") ?: 0, streak.toLong()),
-                    ),
-                )
-                null
-            }
-            .addOnSuccessListener { done(null) }
-            .addOnFailureListener {
-                done("Could not save. Check your connection and retry. " + it.localizedMessage)
-            }
+        try {
+            OfflineLogQueue.enqueue(auth.currentUser!!.uid, id, day, delta)
+            save()
+            done(null)
+        } catch (e: Exception) {
+            done("Could not save on this device: " + e.localizedMessage)
+        }
     }
 
     fun reorder(ids: List<String>, done: (String?) -> Unit) {
         if (demo) {
-            habits = ids.mapIndexedNotNull { i, id ->
+            baseHabits = ids.mapIndexedNotNull { i, id ->
                 habits.find { it.id == id }?.copy(order = i.toLong())
             }
             save()
@@ -315,7 +302,7 @@ object Store {
 
     fun color(id: String, value: Int) {
         if (demo) {
-            habits = habits.map { if (it.id == id) it.copy(color = value) else it }
+            baseHabits = habits.map { if (it.id == id) it.copy(color = value) else it }
             save()
         } else if (signedIn)
             FirebaseFirestore.getInstance()

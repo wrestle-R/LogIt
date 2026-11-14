@@ -5,6 +5,7 @@ import android.content.*
 import android.os.Bundle
 import android.view.*
 import android.widget.*
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.google.android.gms.auth.api.signin.*
 import com.google.android.gms.common.api.ApiException
 import com.google.firebase.auth.GoogleAuthProvider
@@ -14,7 +15,11 @@ class MainActivity : Activity() {
     private var focus: String? = null
 
     override fun onCreate(state: Bundle?) {
+        val splash = installSplashScreen()
         super.onCreate(state)
+        splash.setOnExitAnimationListener { view ->
+            view.view.animate().alpha(0f).setDuration(220).withEndAction { view.remove() }.start()
+        }
         focus = intent.getStringExtra("habit")
         window.statusBarColor = Theme.bg
         window.navigationBarColor = Theme.bg
@@ -68,7 +73,7 @@ class MainActivity : Activity() {
             )
         }
         val root = column()
-        root.setPadding(dp(22), dp(12), dp(22), dp(24))
+        root.setPadding(dp(18), dp(8), dp(18), dp(16))
         val scroll =
             ScrollView(this).apply {
                 setBackgroundColor(Theme.bg)
@@ -123,42 +128,66 @@ class MainActivity : Activity() {
             )
         root.addView(header)
         if (!Store.ready) {
-            root.addView(
-                label(
-                        if (Store.demo) "LOCAL DEMO" else "A LITTLE PROGRESS, EVERY DAY",
-                        10f,
-                        Theme.muted,
-                    )
-                    .apply {
-                        letterSpacing = .16f
-                        setPadding(0, dp(24), 0, dp(6))
-                    }
+            val intro =
+                LinearLayout(this).apply {
+                    orientation = 1
+                    setPadding(0, dp(20), 0, dp(20))
+                }
+            intro.addView(
+                ImageView(this).apply {
+                    setImageResource(R.drawable.ic_logit)
+                    background = Theme.shape(Theme.card, dp(20).toFloat())
+                    contentDescription = "LogIt"
+                },
+                LinearLayout.LayoutParams(dp(76), dp(76)),
             )
-            root.addView(
-                label("Make it a habit.", 32f).apply {
+            intro.addView(
+                label("A little, every day.", 30f).apply {
                     setTypeface(null, 1)
                     letterSpacing = -.035f
+                    setPadding(0, dp(18), 0, dp(6))
                 }
             )
-            root.addView(label("Show up. Log it. Keep going.", 14f, Theme.muted))
-        }
-        if (!Store.ready) {
-            root.addView(
+            intro.addView(
                 label(
-                        if (Store.configured) "Your activities, on every screen."
-                        else "Google setup is pending. Explore the local demo.",
-                        15f,
-                    )
-                    .apply { setPadding(0, dp(32), 0, dp(18)) }
+                    "Your activities. Your progress.\nRight where you need them.",
+                    15f,
+                    Theme.muted,
+                )
             )
+            root.addView(intro)
+            val preview =
+                LinearLayout(this).apply {
+                    orientation = 1
+                    background = Theme.shape(Theme.card, dp(18).toFloat())
+                    setPadding(dp(16), dp(12), dp(16), dp(12))
+                    addView(label("A rhythm you can see", 14f).apply { setTypeface(null, 1) })
+                    addView(label("Activity history · illustration", 11f, Theme.muted))
+                }
+            val today = java.time.LocalDate.parse(Dates.today())
+            val values =
+                (0..111)
+                    .filter { it % 5 != 0 }
+                    .associate { today.minusDays(it.toLong()).toString() to (it % 4 + 1).toLong() }
+            preview.addView(
+                HeatmapView(this, Habit("illustration", "", counts = values), 16),
+                LinearLayout.LayoutParams(-1, dp(116)).apply { topMargin = dp(12) },
+            )
+            root.addView(preview, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(20) })
             root.addView(
                 button("Continue with Google") { signIn() },
                 LinearLayout.LayoutParams(-1, dp(50)),
             )
+            root.addView(
+                label("Your existing LogIt account works here.", 12f, Theme.muted).apply {
+                    gravity = Gravity.CENTER
+                    setPadding(0, dp(10), 0, 0)
+                }
+            )
             return
         }
         val section = row()
-        section.setPadding(0, dp(30), 0, dp(14))
+        section.setPadding(0, dp(14), 0, dp(10))
         val heading =
             LinearLayout(this).apply {
                 orientation = 1
@@ -177,6 +206,14 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams(dp(44), dp(44)),
         )
         root.addView(section)
+        if (OfflineLogQueue.pendingCount() > 0)
+            root.addView(
+                label(
+                    "${OfflineLogQueue.pendingCount()} logs saved on this device · waiting to sync",
+                    12f,
+                    Theme.muted,
+                )
+            )
         if (Store.habits.isEmpty())
             root.addView(label("A clean slate. Add your first activity.", 15f, Theme.muted))
         focus?.let { id ->
@@ -295,7 +332,7 @@ class MainActivity : Activity() {
                 },
             )
             card.addView(plot, LinearLayout.LayoutParams(-1, dp(116)).apply { topMargin = dp(16) })
-            root.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(14) })
+            root.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         }
         if (Store.habits.size > 4) {
             val nav = row()

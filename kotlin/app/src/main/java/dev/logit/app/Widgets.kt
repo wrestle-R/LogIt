@@ -112,7 +112,16 @@ object Widgets {
                 val row =
                     RemoteViews(
                         c.packageName,
-                        if (collection != null) R.layout.widget_list_row else R.layout.widget_row,
+                        if (quick && hs.size == 1 && height >= 132) R.layout.widget_quick_tall
+                        else if (quick) R.layout.widget_quick_compact
+                        else if (collection != null) R.layout.widget_list_row
+                        else R.layout.widget_row,
+                    )
+                if (quick && hs.size == 1 && android.os.Build.VERSION.SDK_INT >= 31)
+                    row.setViewLayoutHeight(
+                        R.id.row,
+                        (height - 24).coerceAtLeast(56).toFloat(),
+                        android.util.TypedValue.COMPLEX_UNIT_DIP,
                     )
                 row.setTextViewText(R.id.title, h.name)
                 row.setTextViewText(R.id.count, "${h.count(Dates.today())} today")

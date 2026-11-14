@@ -59,8 +59,12 @@ class LogActivity : Activity() {
                         d.dismiss()
                         val success =
                             PrettyDialog.Builder(this, theme)
-                                .setTitle("Logged ${h.name}")
-                                .setMessage("One completion added.")
+                                .setTitle("Saved ${h.name}")
+                                .setMessage(
+                                    if (OfflineLogQueue.pendingCount() > 0)
+                                        "Saved on this device. Syncs when you are online."
+                                    else "One completion added."
+                                )
                                 .setPositiveButton("Done") { _, _ -> finish() }
                                 .setNegativeButton("Undo", null)
                                 .setOnCancelListener { finish() }

@@ -38,7 +38,7 @@ class WidgetConfigActivity : Activity() {
 
     private fun render() {
         val root = column()
-        root.setPadding(dp(24), dp(36), dp(24), dp(24))
+        root.setPadding(dp(18), dp(28), dp(18), dp(18))
         val sc =
             ScrollView(this).apply {
                 setBackgroundColor(Theme.bg)
@@ -93,7 +93,7 @@ class WidgetConfigActivity : Activity() {
             val choice = ChoiceView(this, options, initial)
             root.addView(
                 choice,
-                LinearLayout.LayoutParams(-1, dp(50)).apply { bottomMargin = dp(12) },
+                LinearLayout.LayoutParams(-1, dp(50)).apply { bottomMargin = dp(6) },
             )
             return choice
         }

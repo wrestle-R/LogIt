@@ -31,3 +31,44 @@ class HabitTest {
         assertEquals(0L, h.total())
     }
 }
+
+class OfflineProjectionTest {
+    @org.junit.Test
+    fun queuedLogsAndUndoProjectOverCachedData() {
+        val h = Habit("a", "Read")
+        val ops =
+            listOf(
+                LogOp("1", "u", "a", "2026-11-14", 1),
+                LogOp("2", "u", "a", "2026-11-14", 1),
+                LogOp("3", "u", "a", "2026-11-14", -1),
+            )
+        org.junit.Assert.assertEquals(
+            1L,
+            OfflineLogQueue.project(listOf(h), ops).single().count("2026-11-14"),
+        )
+    }
+
+    @org.junit.Test
+    fun acknowledgedServerOperationDoesNotDoubleCount() {
+        val h =
+            Habit(
+                "a",
+                "Read",
+                counts = mapOf("2026-11-14" to 2),
+                appliedOps = setOf("already-applied"),
+            )
+        val ops = listOf(LogOp("already-applied", "u", "a", "2026-11-14", 1))
+        org.junit.Assert.assertEquals(
+            2L,
+            OfflineLogQueue.project(listOf(h), ops).single().count("2026-11-14"),
+        )
+    }
+
+    @org.junit.Test
+    fun undoAfterMidnightTargetsOriginalDay() {
+        val h = Habit("a", "Read", counts = mapOf("2026-11-14" to 1, "2026-11-15" to 2))
+        val after = OfflineLogQueue.delta(h, "2026-11-14", -1)
+        org.junit.Assert.assertEquals(0L, after.count("2026-11-14"))
+        org.junit.Assert.assertEquals(2L, after.count("2026-11-15"))
+    }
+}

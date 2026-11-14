@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Image from "next/image";
+import { useEffect, useMemo, useState } from "react";
 import {
   GoogleAuthProvider,
   onAuthStateChanged,
@@ -21,6 +22,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import {
+  Download,
   Plus,
   GripVertical,
   Moon,
@@ -60,6 +62,13 @@ import {
 import { Field, FieldLabel } from "@/components/ui/field";
 import { toast } from "sonner";
 import {
+  enqueue,
+  queued,
+  project,
+  flush,
+  type PendingLog,
+} from "@/lib/offline";
+import {
   DndContext,
   PointerSensor,
   KeyboardSensor,
@@ -76,6 +85,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 
 type Habit = {
+  logOps?: Record<string, boolean>;
   id: string;
   name: string;
   completions: string[];
@@ -216,7 +226,7 @@ export default function Dashboard() {
     }),
   );
   const [user, setUser] = useState<User | null>(null),
-    [habits, setHabits] = useState<Habit[]>([]),
+    [baseHabits, setHabits] = useState<Habit[]>([]),
     [demo, setDemo] = useState(false),
     [loaded, setLoaded] = useState(false),
     [dark, setDark] = useState(true),
@@ -229,7 +239,71 @@ export default function Dashboard() {
     [busy, setBusy] = useState(false),
     [syncError, setSyncError] = useState("");
 
-  useEffect(() => onAuthStateChanged(auth, setUser), []);
+  const [pending, setPending] = useState<PendingLog[]>([]);
+  const habits = useMemo(
+    () => (demo ? baseHabits : project(baseHabits, pending)),
+    [baseHabits, pending, demo],
+  );
+  useEffect(
+    () =>
+      onAuthStateChanged(auth, (u) => {
+        setHabits([]);
+        setPending([]);
+        setUser(u);
+      }),
+    [],
+  );
+  useEffect(() => {
+    if (!user) {
+      setPending([]);
+      return;
+    }
+    let live = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const update = () => {
+      if (live) setPending(queued(user.uid));
+    };
+    const run = () => {
+      update();
+      if (navigator.onLine)
+        void flush(user.uid, applyQueued, update).catch((e) => {
+          if (live) {
+            setSyncError(
+              "Saved on this device. Sync pending: " +
+                (e instanceof Error ? e.message : "check your connection"),
+            );
+            retry = setTimeout(run, 30000);
+          }
+        });
+    };
+    run();
+    window.addEventListener("online", run);
+    window.addEventListener("storage", run);
+    return () => {
+      live = false;
+      if (retry) clearTimeout(retry);
+      window.removeEventListener("online", run);
+      window.removeEventListener("storage", run);
+    };
+  }, [user]);
+  useEffect(() => {
+    if ("serviceWorker" in navigator && process.env.NODE_ENV === "production")
+      void navigator.serviceWorker
+        .register("/sw.js")
+        .then(async (reg) => {
+          await navigator.serviceWorker.ready;
+          const resources = performance
+            .getEntriesByType("resource")
+            .map((x) => x.name)
+            .filter((x) => x.startsWith(location.origin + "/_next/static/"));
+          (reg.active || reg.waiting)?.postMessage({
+            type: "CACHE_ASSETS",
+            resources,
+          });
+        })
+        .catch(() => {});
+  }, []);
+
   useEffect(() => {
     const theme = localStorage.getItem("logit-theme");
     setDark(theme !== "light");
@@ -281,19 +355,31 @@ export default function Dashboard() {
       return;
     }
     if (!user) throw new Error("Sign in first");
+    enqueue(user.uid, h.id, day, delta);
+    setPending(queued(user.uid));
+    if (navigator.onLine)
+      void flush(user.uid, applyQueued, () =>
+        setPending(queued(user.uid)),
+      ).catch(() => setSyncError("Saved on this device. Waiting to sync."));
+  }
+  async function applyQueued(op: PendingLog) {
+    if (auth.currentUser?.uid !== op.owner)
+      throw new Error("Sign in to sync this queue");
     await runTransaction(db, async (tx) => {
-      const ref = doc(db, "habits", h.id);
+      const ref = doc(db, "habits", op.habit);
       const snap = await tx.get(ref);
       if (!snap.exists()) throw new Error("Activity no longer exists");
-      const current = { ...snap.data(), id: h.id } as Habit;
-      if (current.userId !== user.uid)
+      const current = { ...snap.data(), id: op.habit } as Habit;
+      if (current.userId !== op.owner)
         throw new Error("Activity belongs to another account");
-      const next = change(current, day, delta);
+      if (current.logOps?.[op.id]) return;
+      const next = change(current, op.day, op.delta);
       tx.update(ref, {
-        [`dailyCounts.${day}`]: count(next, day),
+        [`dailyCounts.${op.day}`]: count(next, op.day),
         completions: next.completions,
         currentStreak: streak(next),
         longestStreak: Math.max(current.longestStreak || 0, streak(next)),
+        [`logOps.${op.id}`]: true,
       });
     });
   }
@@ -305,7 +391,7 @@ export default function Dashboard() {
     try {
       await log(h, 1, day);
       setConfirm(null);
-      toast.success(`Logged ${h.name}`, {
+      toast.success(`Saved ${h.name}`, {
         duration: 10000,
         action: {
           label: "Undo",
@@ -393,9 +479,17 @@ export default function Dashboard() {
       <main className="shell">
         <header>
           <a className="wordmark" href="/">
-            LogIt<span>●</span>
+            <Image src="/logo.svg" alt="" width={28} height={28} />
+            LogIt
           </a>
           <div className="toolbar">
+            <Hint label="Download Android app">
+              <Button asChild variant="ghost" size="icon">
+                <a href="/download" aria-label="Download Android app">
+                  <Download />
+                </a>
+              </Button>
+            </Hint>
             <Hint label={dark ? "Use light theme" : "Use dark theme"}>
               <Button
                 variant="ghost"
@@ -421,17 +515,44 @@ export default function Dashboard() {
             )}
           </div>
         </header>
-        {!user && !demo && (
-          <section className="intro">
-            <p className="eyebrow">A LITTLE PROGRESS, EVERY DAY</p>
-            <h1>Make it a habit.</h1>
-            <p>Show up. Log it. See how far you’ve come.</p>
-          </section>
-        )}
         {!user && !demo ? (
-          <section className="signin">
-            <h2>Your rhythm starts here.</h2>
-            <p>Use the same Google account as the original LogIt.</p>
+          <section className="login">
+            <div className="login-copy">
+              <Image src="/logo.svg" alt="" width={64} height={64} />
+              <h1>A little, every day.</h1>
+              <p>
+                Your activities. Your progress.
+                <br />
+                Right where you need them.
+              </p>
+            </div>
+            <div className="login-history">
+              <div className="activity-heading">
+                <b>A rhythm you can see</b>
+                <span className="eyebrow">ILLUSTRATION</span>
+              </div>
+              <div className="graph-viewport">
+                <div
+                  className="heatmap"
+                  style={{ gridTemplateColumns: "repeat(16,14px)" }}
+                  aria-label="Illustration of an activity heatmap"
+                >
+                  {Array.from({ length: 112 }, (_, i) => (
+                    <span
+                      key={i}
+                      style={
+                        i % 5
+                          ? {
+                              background: palette[0],
+                              opacity: 0.25 + (i % 4) * 0.25,
+                            }
+                          : undefined
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
             <Button
               disabled={busy}
               onClick={async () => {
@@ -447,29 +568,20 @@ export default function Dashboard() {
             >
               Continue with Google
             </Button>
-            {process.env.NODE_ENV === "development" && (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  let saved: Habit[] = [];
-                  try {
-                    saved = JSON.parse(
-                      localStorage.getItem("logit-demo") || "[]",
-                    );
-                  } catch {}
-                  setHabits(saved.length ? saved : demoHabits());
-                  setDemo(true);
-                }}
-              >
-                Explore local demo
-              </Button>
-            )}
+            <p className="login-trust">
+              Your existing LogIt account works here.
+            </p>
           </section>
         ) : (
           <>
             {demo && (
               <p className="demo-note">
                 Local demo. Your account data stays separate.
+              </p>
+            )}
+            {pending.length > 0 && (
+              <p role="status" className="pending-note">
+                {pending.length} logs saved on this device · sync pending
               </p>
             )}
             {syncError && (
