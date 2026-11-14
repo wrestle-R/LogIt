@@ -3,12 +3,12 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 // Public Firebase client identifiers; access is enforced by Auth and Firestore rules.
 const config = {
-  apiKey: "AIzaSyCseHWf4k-wLb17ccqOygN1VKt9yYbSbw8",
-  authDomain: "logit-75c47.firebaseapp.com",
-  projectId: "logit-75c47",
-  storageBucket: "logit-75c47.firebasestorage.app",
-  messagingSenderId: "637637211239",
-  appId: "1:637637211239:web:74f67a6fde3448d91a90c2",
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 const app = getApps().length ? getApp() : initializeApp(config);
 export const auth = getAuth(app);
