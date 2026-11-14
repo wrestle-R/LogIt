@@ -133,25 +133,29 @@ class WidgetConfigActivity : Activity() {
         root.addView(gradient)
         val sample =
             ImageView(this).apply {
-                setImageBitmap(Theme.graph(Store.habits.first(), 16, 600, 160))
+                scaleType = ImageView.ScaleType.CENTER
                 contentDescription = "Sample activity heatmap"
             }
-        root.addView(sample, LinearLayout.LayoutParams(-1, dp(110)))
+        root.addView(sample, LinearLayout.LayoutParams(-1, dp(116)))
         val refreshPreview = {
             sample.setBackgroundColor(
                 if (theme.selectedItemPosition == 0) 0xff101012.toInt() else 0xfffafafa.toInt()
             )
-            sample.setImageBitmap(
-                Theme.graph(
-                    Store.habits.first(),
-                    periods[timeframe.selectedItemPosition],
-                    600,
-                    180,
-                    color.selectedItemPosition,
-                    theme.selectedItemPosition == 1,
-                    gradient.isChecked,
-                )
-            )
+            sample.post {
+                if (sample.width > 0 && sample.height > 0)
+                    sample.setImageBitmap(
+                        Theme.graph(
+                            Store.habits.first(),
+                            periods[timeframe.selectedItemPosition],
+                            sample.width,
+                            sample.height,
+                            color.selectedItemPosition,
+                            theme.selectedItemPosition == 1,
+                            gradient.isChecked,
+                        )
+                    )
+            }
+            Unit
         }
         color.onChange = refreshPreview
         timeframe.onChange = refreshPreview

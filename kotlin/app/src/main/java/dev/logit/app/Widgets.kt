@@ -112,7 +112,7 @@ object Widgets {
                 val row =
                     RemoteViews(
                         c.packageName,
-                        if (quick && hs.size == 1 && height >= 132) R.layout.widget_quick_tall
+                        if (quick && hs.size == 1 && height >= 156) R.layout.widget_quick_tall
                         else if (quick) R.layout.widget_quick_compact
                         else if (collection != null) R.layout.widget_list_row
                         else R.layout.widget_row,
@@ -187,7 +187,7 @@ object Widgets {
                     PendingIntent.getActivity(
                         c,
                         id,
-                        Intent(c, MainActivity::class.java)
+                        Intent(c, WidgetActionActivity::class.java)
                             .setAction("widget-list:$id")
                             .addFlags(
                                 Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
