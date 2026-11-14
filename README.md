@@ -1,23 +1,5 @@
 # LogIt
 
-A little progress, every day. Log activities more than once a day, see the history, and log straight from your Android home screen.
+Inspired by [BigRom](https://romeiro.dev) and his [LogIt](https://github.com/romeirofernandes/LogIt). I have somehow gotten really into making widgets and this seemed like a pretty good one to make alongside it, so why not.
 
-- `next/`: Next.js website with shadcn controls. Original React client is preserved in `next/legacy/`.
-- `kotlin/`: native Android app and three resizable widgets: quick log, heatmap, and heatmap with logging.
-
-```sh
-cd next
-npm ci
-npm run dev
-```
-
-For Android, put the Firebase Android client config at `kotlin/app/google-services.json`, then:
-
-```sh
-cd kotlin
-./gradlew :app:assembleDebug
-```
-
-Requires JDK 17 and Android SDK 37. The app uses the existing LogIt Firebase project and Google accounts. Firebase config, signing files and private local notes stay out of Git.
-
-See [compatibility and verification](docs/implementation.md) for data behaviour and test coverage.
+[Download the APK](https://github.com/wrestle-R/LogIt/releases/latest/download/logit.apk)
