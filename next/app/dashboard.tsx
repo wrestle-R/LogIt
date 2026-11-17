@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   GoogleAuthProvider,
   onAuthStateChanged,
@@ -148,17 +148,28 @@ function Heatmap({
   weeks: number;
   gradient: boolean;
 }) {
+  const viewport = useRef<HTMLDivElement>(null);
+  const [capacity, setCapacity] = useState(19);
+  useEffect(() => {
+    const node = viewport.current;
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => setCapacity(Math.max(1, Math.floor((entry.contentRect.width + 3) / 17))));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const visibleWeeks = Math.min(weeks, capacity);
   const today = new Date(`${dayKey()}T12:00:00Z`);
   return (
+    <div ref={viewport} className="heatmap-fit">
     <div
       className="heatmap"
-      style={{ gridTemplateColumns: `repeat(${weeks},14px)` }}
+      style={{ gridTemplateColumns: `repeat(${visibleWeeks},14px)` }}
       role="img"
-      aria-label={`${habit.name}, ${weeks} weeks of history`}
+      aria-label={`${habit.name}, ${visibleWeeks} weeks of history`}
     >
-      {Array.from({ length: weeks * 7 }, (_, i) => {
+      {Array.from({ length: visibleWeeks * 7 }, (_, i) => {
         const date = new Date(today);
-        date.setUTCDate(today.getUTCDate() - (weeks * 7 - 1 - i));
+        date.setUTCDate(today.getUTCDate() - (visibleWeeks * 7 - 1 - i));
         const key = date.toISOString().slice(0, 10);
         const n = count(habit, key);
         const color = palette[habit.color || 0];
@@ -179,7 +190,7 @@ function Heatmap({
           />
         );
       })}
-    </div>
+    </div></div>
   );
 }
 function Hint({
@@ -231,7 +242,7 @@ export default function Dashboard() {
     [loaded, setLoaded] = useState(false),
     [dark, setDark] = useState(true),
     [page, setPage] = useState(0),
-    [weeks, setWeeks] = useState("16"),
+    [weeks, setWeeks] = useState("52"),
     [gradient, setGradient] = useState(false),
     [adding, setAdding] = useState(false),
     [authOpen, setAuthOpen] = useState(false),
@@ -511,7 +522,7 @@ export default function Dashboard() {
             )}
           </div>
         </header>
-        <section className="persistence" aria-labelledby="persistence-title">
+        {!(user || demo) && <section className="persistence" aria-labelledby="persistence-title">
           <div className="definition-title">
             <h1 id="persistence-title">persistence</h1>
             <span>/pərˈsɪstəns/</span>
@@ -524,7 +535,7 @@ export default function Dashboard() {
           <p className="definition-quote">
             “Persistence and endurance will make you omnipotent.”
           </p>
-        </section>
+        </section>}
         <>
           {demo && (
             <p className="demo-note">
@@ -559,7 +570,7 @@ export default function Dashboard() {
               }}
             >
               <Plus data-icon="inline-start" />
-              Add Habit
+              Add activity
             </Button>
           </section>
           {(user || demo) && (
@@ -571,7 +582,7 @@ export default function Dashboard() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
-                    {[4, 8, 16, 26, 52].map((n) => (
+                    {[4, 8, 16, 19, 26, 52].map((n) => (
                       <SelectItem key={n} value={String(n)}>
                         {n} weeks
                       </SelectItem>
@@ -626,7 +637,7 @@ export default function Dashboard() {
                                 <Badge variant="secondary">
                                   {count(h, dayKey())} today
                                 </Badge>
-                                <Hint label="Drag to reorder, or use the up and down arrow keys">
+                                <Hint label="Drag to reorder">
                                   <Button
                                     variant="ghost"
                                     size="icon"
@@ -648,15 +659,20 @@ export default function Dashboard() {
                                   gradient={gradient}
                                 />
                               </div>
-                              <Button
-                                className="overlay-log"
-                                onClick={() => setConfirm(h)}
-                              >
-                                <Plus data-icon="inline-start" />
-                                Log
-                              </Button>
                             </div>
                             <footer>
+                              <div className="toolbar">
+                                <Button variant="outline" disabled={busy || total(h) === 0}
+                                  onClick={async () => {
+                                    if (busy) return;
+                                    setBusy(true);
+                                    const day = [...new Set([...h.completions, ...Object.keys(h.dailyCounts || {})])]
+                                      .filter(d => count(h, d) > 0).sort().at(-1);
+                                    try { if (day) await log(h, -1, day); } catch (e) { error(e); }
+                                    finally { setBusy(false); }
+                                  }}>Undo</Button>
+                                <Button onClick={() => setConfirm(h)}><Plus /> Log today</Button>
+                              </div>
                               <Select
                                 value={String(h.color || 0)}
                                 onValueChange={(v) => void color(h, v)}

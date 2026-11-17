@@ -65,16 +65,10 @@ object OfflineLogQueue {
                 }
             )
         val editor = Store.prefs.edit().putString("pending_$owner", a.toString())
-        if (added != null)
-            editor.putString(
-                "last_log_$owner",
-                JSONObject()
-                    .put("id", added.id)
-                    .put("habit", added.habit)
-                    .put("day", added.day)
-                    .toString(),
-            )
-        if (clearUndo) editor.remove("last_log_$owner")
+        val history = UndoHistory.record(undoHistory(owner), added, clearUndo)
+        editor.putString("undo_history_$owner", JSONArray(history.map {
+            JSONObject().put("id", it.id).put("habit", it.habit).put("day", it.day)
+        }).toString()).remove("last_log_$owner")
         check(editor.commit()) {
             "Local storage unavailable"
         }
@@ -94,22 +88,24 @@ object OfflineLogQueue {
     }
 
     @Synchronized
-    fun lastLog(owner: String): LogOp? =
-        try {
-            Store.prefs.getString("last_log_$owner", null)?.let { raw ->
-                val o = JSONObject(raw)
-                LogOp(o.getString("id"), owner, o.getString("habit"), o.getString("day"), 1)
-            }
-        } catch (_: Exception) {
-            null
+    fun undoHistory(owner: String): List<LogOp> {
+        val stored = Store.prefs.getString("undo_history_$owner", null)
+        val legacy = Store.prefs.getString("last_log_$owner", null)
+        val a = if (stored != null) JSONArray(stored)
+                else if (legacy != null) JSONArray().put(JSONObject(legacy)) else JSONArray()
+        return (0 until a.length()).map { i ->
+            val o = a.getJSONObject(i)
+            LogOp(o.getString("id"), owner, o.getString("habit"), o.getString("day"), 1)
         }
+    }
+
+    @Synchronized
+    fun lastLog(owner: String): LogOp? = undoHistory(owner).lastOrNull()
 
     /** Compare the persisted log ID so two Undo taps cannot reverse the same event. */
     @Synchronized
     fun undo(owner: String, expectedId: String) {
-        val last = lastLog(owner)
-        check(last != null && last.id == expectedId) { "That log has already been undone" }
-        val reversal = LogOp(UUID.randomUUID().toString(), owner, last.habit, last.day, -1)
+        val reversal = UndoHistory.reverse(undoHistory(owner), expectedId)
         persist(owner, operations(owner) + reversal, clearUndo = true)
         schedule()
     }

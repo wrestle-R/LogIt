@@ -401,3 +401,31 @@ h3 {
 .empty {
   padding: 24px 16px;
 }
+
+/* The signed-in view is a compact activity ledger. */
+.shell { max-width: 880px; padding: 28px 28px 40px; }
+.shell > header { padding-bottom: 22px; border-bottom: 1px solid var(--border); }
+.activity-controls { margin: 32px 0 20px; }
+.activity-controls h2 { font-size: 26px; letter-spacing: -.8px; }
+.filters { padding-bottom: 18px; margin-bottom: 0; }
+.activities { gap: 16px; }
+.activity { padding: 22px; border-radius: 16px; background: var(--card); }
+.activity-heading h3 { font-size: 20px; letter-spacing: -.4px; }
+.activity-heading p { font-size: 12px; }
+.graph-area { margin: 24px 0 20px; }
+.graph-viewport { overflow: hidden; }
+.heatmap-fit { width: 100%; }
+.activity footer { display: flex; flex-direction: row-reverse; align-items: center; justify-content: space-between; gap: 12px; }
+.activity footer .toolbar { gap: 8px; }
+.bottom-note { margin-top: 28px; }
+@media (max-width: 540px) {
+ .shell { padding: 18px 16px 28px; }
+ .activity { padding: 16px; }
+ .activity-controls { margin-top: 24px; }
+ .activity-controls h2 { font-size: 23px; }
+ .activity footer { flex-wrap: wrap; }
+ .activity footer .toolbar { margin-left: auto; }
+}
+.activities { grid-template-columns: minmax(0, 1fr); }
+.activity, .graph-area, .graph-viewport, .heatmap-fit { min-width: 0; }
+.activity footer [data-slot="select-trigger"] { width: 104px; }

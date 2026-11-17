@@ -168,8 +168,8 @@ class MainActivity : Activity() {
         root.addView(section)
         val last = Store.lastLog()
         val tools = row().apply { setPadding(0, 0, 0, dp(12)) }
-        val periods = intArrayOf(4, 8, 16, 26, 52)
-        val historyWeeks = Store.prefs.getInt("historyWeeks", 52)
+        val periods = intArrayOf(4, 8, 16, 19, 26, 52)
+        val historyWeeks = Store.prefs.getInt("historyWeeksV2", 19)
         tools.addView(
             ChoiceView(
                     this,
@@ -180,7 +180,7 @@ class MainActivity : Activity() {
                     onChange = {
                         Store.prefs
                             .edit()
-                            .putInt("historyWeeks", periods[selectedItemPosition])
+                            .putInt("historyWeeksV2", periods[selectedItemPosition])
                             .apply()
                         render()
                     }
@@ -189,7 +189,7 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(12) },
         )
         tools.addView(
-            button("Undo last") {
+            button("Undo") {
                     if (last != null)
                         Store.undoLast(last.id) { error -> toast(error ?: "Last log undone") }
                 }
@@ -207,7 +207,7 @@ class MainActivity : Activity() {
                     stateListAnimator = null
                     isEnabled = last != null
                     alpha = if (last == null) .4f else 1f
-                    contentDescription = "Undo last log on this device"
+                    contentDescription = "Undo a log on this device"
                     tooltipText = "Undo the most recent log from this device"
                 },
             LinearLayout.LayoutParams(-2, dp(44)),

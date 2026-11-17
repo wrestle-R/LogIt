@@ -124,14 +124,11 @@ object Widgets {
             else emptyList()
         val rv = RemoteViews(c.packageName, R.layout.widget)
         rv.removeAllViews(R.id.rows)
-        if (quick)
-            rv.setViewPadding(
-                R.id.root,
-                (8 * c.resources.displayMetrics.density).toInt(),
-                (8 * c.resources.displayMetrics.density).toInt(),
-                (8 * c.resources.displayMetrics.density).toInt(),
-                (8 * c.resources.displayMetrics.density).toInt(),
-            )
+        val compactGraph = !quick && requestedHeight < 176
+        if (quick || compactGraph) {
+            val pad = (8 * c.resources.displayMetrics.density).toInt()
+            rv.setViewPadding(R.id.root, pad, pad, pad, pad)
+        }
         rv.setOnClickPendingIntent(R.id.root, click(c, id, null, false))
         val light = config.optString("theme", "dark") == "light"
         val fg = if (light) 0xff18181b.toInt() else 0xfffafafa.toInt()
@@ -154,38 +151,50 @@ object Widgets {
         } else {
             val width = requestedWidth.coerceAtLeast(100)
             val height = requestedHeight.coerceAtLeast(60)
-            val weeks =
-                if (config.optBoolean("fitWidth", true)) 52
-                else config.optInt("weeks", 16).coerceIn(4, 52)
-            val collection =
-                if (android.os.Build.VERSION.SDK_INT >= 31 && hs.size > 1)
-                    RemoteViews.RemoteCollectionItems.Builder()
-                        .setHasStableIds(true)
-                        .setViewTypeCount(1)
-                else null
+            val weeks = 52
             val multiGrid = hs.size > 1 && width >= (if (quick) 260 else 320)
-            val rowHeight = if (quick) 68 else 148
-            val graphWidth = if (multiGrid) (width - 40) / 2 else width - 32
-            hs.forEachIndexed { index, h ->
+            val graphWidth =
+                if (multiGrid) (width - 40) / 2 else width - if (compactGraph) 16 else 32
+            val columns = if (multiGrid) 2 else 1
+            val cellHeight = if (quick) minOf(76, height - 16) else if (compactGraph) 116 else 156
+            val padding = if (quick || compactGraph) 16 else 24
+            val fullCapacity = maxOf(1, (height - padding) / cellHeight) * columns
+            val showOverflow = fullCapacity < hs.size && height >= cellHeight + padding + 24
+            val capacity = maxOf(1, (height - padding - if (showOverflow) 24 else 0) / cellHeight) * columns
+            val shown = hs.take(capacity)
+            rv.setContentDescription(R.id.root, "LogIt, ${shown.size} of ${hs.size} activities. Resize to show more.")
+            if (showOverflow) {
+                rv.setViewVisibility(R.id.overflow_hint, View.VISIBLE)
+                rv.setTextViewText(R.id.overflow_hint, "+${hs.size - shown.size} activities · resize to show")
+                rv.setTextColor(R.id.overflow_hint, muted)
+                rv.setOnClickPendingIntent(R.id.overflow_hint, click(c, id, null, false))
+            }
+            var band: RemoteViews? = null
+            shown.forEachIndexed { index, h ->
+                if (multiGrid && index % 2 == 0) {
+                    band = RemoteViews(c.packageName, R.layout.widget_band)
+                }
                 val row =
                     RemoteViews(
                         c.packageName,
-                        if (quick && hs.size == 1 && height >= 120 && width < 280)
+                        if (quick && hs.size == 1 && height >= 132 && width < 280)
                             R.layout.widget_quick_tall
                         else if (quick) R.layout.widget_quick_compact
-                        else if (collection != null) R.layout.widget_list_row
+                        else if (hs.size > 1) R.layout.widget_list_row
                         else R.layout.widget_row,
                     )
+                if (hs.size > 1 && android.os.Build.VERSION.SDK_INT >= 31)
+                    row.setViewLayoutHeight(R.id.row, cellHeight.toFloat(), android.util.TypedValue.COMPLEX_UNIT_DIP)
                 if (quick && hs.size == 1 && android.os.Build.VERSION.SDK_INT >= 31)
                     row.setViewLayoutHeight(
                         R.id.row,
-                        (height - 16).coerceAtLeast(56).toFloat(),
-                        android.util.TypedValue.COMPLEX_UNIT_DIP,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT.toFloat(),
+                        android.util.TypedValue.COMPLEX_UNIT_PX,
                     )
                 if (quick) {
                     row.setViewVisibility(
                         R.id.quick_hint,
-                        if (height < 100 && hs.size == 1) View.GONE else View.VISIBLE,
+                        if (height < 100) View.GONE else View.VISIBLE,
                     )
                     row.setInt(R.id.quick_log, "setColorFilter", fg)
                     row.setTextColor(R.id.quick_hint, muted)
@@ -212,8 +221,9 @@ object Widgets {
                 row.setContentDescription(R.id.overlay_log, "Log ${h.name} for today")
                 row.setOnClickPendingIntent(R.id.quick_log, click(c, id, h.id, false))
                 row.setOnClickPendingIntent(R.id.overlay_log, click(c, id, h.id, true))
-                if (!quick && hs.size == 1 && android.os.Build.VERSION.SDK_INT >= 31) {
-                    val compact = height < 176
+                if (!quick && android.os.Build.VERSION.SDK_INT >= 31) {
+                    val compact = compactGraph
+                    if (compact) row.setViewPadding(R.id.row, 0, 0, 0, 0)
                     row.setViewVisibility(
                         R.id.widget_heading,
                         if (compact) View.GONE else View.VISIBLE,
@@ -231,6 +241,13 @@ object Widgets {
                         val inset = ((graphWidth - (cols * 17 - 3)) / 2f).coerceAtLeast(0f)
                         val px = (minOf(inset, 8f) * c.resources.displayMetrics.density).toInt()
                         row.setViewPadding(R.id.widget_heading, px, 0, px, 0)
+                        row.setViewVisibility(
+                            R.id.widget_footer,
+                            if (hs.size == 1 && height >= 196) View.VISIBLE else View.GONE,
+                        )
+                        row.setTextViewText(R.id.widget_footer, "Last $cols weeks")
+                        row.setTextColor(R.id.widget_footer, muted)
+                        row.setViewPadding(R.id.widget_footer, px, 0, px, 0)
                         row.setViewLayoutMargin(
                             R.id.overlay_log,
                             RemoteViews.MARGIN_START,
@@ -264,50 +281,13 @@ object Widgets {
                     )
                     row.setOnClickPendingIntent(R.id.graph, click(c, id, h.id, false))
                 }
-                if (collection != null && android.os.Build.VERSION.SDK_INT >= 31) {
-                    if (!quick)
-                        row.setViewLayoutHeight(
-                            R.id.plot,
-                            (rowHeight - 32).toFloat(),
-                            android.util.TypedValue.COMPLEX_UNIT_DIP,
-                        )
-                    row.setOnClickFillInIntent(
-                        R.id.row,
-                        Intent().putExtra("habit", h.id).putExtra("log", quick),
-                    )
-                    row.setOnClickFillInIntent(
-                        R.id.graph,
-                        Intent().putExtra("habit", h.id).putExtra("log", false),
-                    )
-                    row.setOnClickFillInIntent(
-                        R.id.quick_log,
-                        Intent().putExtra("habit", h.id).putExtra("log", false),
-                    )
-                    row.setOnClickFillInIntent(
-                        R.id.overlay_log,
-                        Intent().putExtra("habit", h.id).putExtra("log", true),
-                    )
-                    collection.addItem(index.toLong(), row)
+                if (multiGrid) {
+                    // Static cells keep every action independent without a scrolling collection.
+                    band!!.addView(if (index % 2 == 0) R.id.left_cell else R.id.right_cell, row)
+                    if (index % 2 == 1 || index == shown.lastIndex) {
+                        rv.addView(R.id.rows, band)
+                    }
                 } else rv.addView(R.id.rows, row)
-            }
-            if (collection != null && android.os.Build.VERSION.SDK_INT >= 31) {
-                rv.setViewVisibility(R.id.rows, View.GONE)
-                val collectionId = if (multiGrid) R.id.widget_grid else R.id.widget_list
-                rv.setViewVisibility(collectionId, View.VISIBLE)
-                rv.setRemoteAdapter(collectionId, collection.build())
-                val template =
-                    PendingIntent.getActivity(
-                        c,
-                        id,
-                        Intent(c, WidgetActionActivity::class.java)
-                            .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
-                            .setAction("widget-list:$id")
-                            .addFlags(
-                                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                            ),
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
-                    )
-                rv.setPendingIntentTemplate(collectionId, template)
             }
         }
         return rv
