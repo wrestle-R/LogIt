@@ -98,6 +98,8 @@ class MainActivity : Activity() {
                 background = Theme.shape(Theme.card, dp(24).toFloat())
                 setTextColor(Theme.text)
                 textSize = 20f
+                stateListAnimator = null
+                elevation = 0f
                 contentDescription = description
                 tooltipText = description
                 minWidth = 0
@@ -106,7 +108,14 @@ class MainActivity : Activity() {
             }
         val header = row()
         header.addView(
-            label("LogIt", 25f).apply { setTypeface(null, 1) },
+            ImageView(this).apply {
+                setImageResource(R.drawable.ic_logit_mark)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(8) },
+        )
+        header.addView(
+            label("LogIt", 22f).apply { setTypeface(null, 1) },
             LinearLayout.LayoutParams(0, -2, 1f),
         )
         header.addView(
@@ -130,28 +139,7 @@ class MainActivity : Activity() {
             )
         root.addView(header)
         if (!Store.ready) {
-            val login =
-                column().apply {
-                    setPadding(0, dp(28), 0, dp(16))
-                    addView(label("Welcome to LogIt", 24f).apply { setTypeface(null, 1) })
-                    addView(label("Sign in to start tracking your habits", 14f, Theme.muted))
-                }
-            root.addView(login)
-            root.addView(
-                button(if (authBusy) "Opening Google…" else "Continue with Google") { signIn() }
-                    .apply {
-                        isEnabled = !authBusy
-                        alpha = if (authBusy) .6f else 1f
-                    },
-                LinearLayout.LayoutParams(-1, dp(48)),
-            )
-            authError?.let {
-                root.addView(
-                    label(it, 13f, Theme.muted).apply {
-                        accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-                    }
-                )
-            }
+            root.addView(loginView(authBusy, authError) { signIn() })
             return
         }
         val section = row()
