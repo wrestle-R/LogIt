@@ -119,10 +119,7 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams(0, -2, 1f),
         )
         header.addView(
-            icon(
-                if (Theme.light()) "☾" else "☼",
-                if (Theme.light()) "Use dark theme" else "Use light theme",
-            ) {
+            ThemeToggle(this) {
                 Store.prefs
                     .edit()
                     .putString("theme", if (Theme.light()) "dark" else "light")
@@ -130,7 +127,7 @@ class MainActivity : Activity() {
                 Widgets.refresh(this)
                 render()
             },
-            LinearLayout.LayoutParams(dp(44), dp(44)),
+            LinearLayout.LayoutParams(dp(80), dp(48)),
         )
         if (Store.ready)
             header.addView(
