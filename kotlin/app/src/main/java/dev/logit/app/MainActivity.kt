@@ -13,6 +13,8 @@ import com.google.firebase.auth.GoogleAuthProvider
 class MainActivity : Activity() {
     private var page = 0
     private var focus: String? = null
+    private var authBusy = false
+    private var authError: String? = null
 
     override fun onCreate(state: Bundle?) {
         val splash = installSplashScreen()
@@ -136,9 +138,20 @@ class MainActivity : Activity() {
                 }
             root.addView(login)
             root.addView(
-                button("Continue with Google") { signIn() },
+                button(if (authBusy) "Opening Google…" else "Continue with Google") { signIn() }
+                    .apply {
+                        isEnabled = !authBusy
+                        alpha = if (authBusy) .6f else 1f
+                    },
                 LinearLayout.LayoutParams(-1, dp(48)),
             )
+            authError?.let {
+                root.addView(
+                    label(it, 13f, Theme.muted).apply {
+                        accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+                    }
+                )
+            }
             return
         }
         val section = row()
@@ -386,6 +399,7 @@ class MainActivity : Activity() {
 
     @Suppress("DEPRECATION")
     private fun signIn() {
+        if (authBusy) return
         if (!Store.configured) {
             toast("Sign-in is unavailable: Firebase configuration is missing.")
             return
@@ -400,15 +414,31 @@ class MainActivity : Activity() {
                 .requestIdToken(getString(rid))
                 .requestEmail()
                 .build()
-        android.util.Log.i("LogItAuth", "Opening Google account chooser")
-        try {
-            startActivityForResult(GoogleSignIn.getClient(this, options).signInIntent, 42)
-        } catch (e: Exception) {
-            android.util.Log.w(
-                "LogItAuth",
-                "Account chooser launch failed: ${e.javaClass.simpleName}",
-            )
-            toast("Could not open Google sign-in. Please try again.")
+        authBusy = true
+        authError = null
+        render()
+        val client = GoogleSignIn.getClient(this, options)
+        // Firebase sign-out does not clear Google's last selected account. Clear only
+        // this app's Google session before an explicit sign-in, so the user can choose.
+        client.signOut().addOnCompleteListener(this) { cleared ->
+            if (!cleared.isSuccessful) {
+                authBusy = false
+                authError = "Could not open account selection. Please try again."
+                render()
+                return@addOnCompleteListener
+            }
+            android.util.Log.i("LogItAuth", "Opening Google account chooser after session clear")
+            try {
+                startActivityForResult(client.signInIntent, 42)
+            } catch (e: Exception) {
+                android.util.Log.w(
+                    "LogItAuth",
+                    "Account chooser launch failed: ${e.javaClass.simpleName}",
+                )
+                authBusy = false
+                authError = "Could not open Google sign-in. Please try again."
+                render()
+            }
         }
     }
 
@@ -426,13 +456,17 @@ class MainActivity : Activity() {
                     .signInWithCredential(GoogleAuthProvider.getCredential(token, null))
                     .addOnSuccessListener(this) {
                         android.util.Log.i("LogItAuth", "Firebase sign-in completed")
+                        authBusy = false
+                        render()
                     }
                     .addOnFailureListener(this) {
                         android.util.Log.w(
                             "LogItAuth",
                             "Firebase sign-in failed: ${it.javaClass.simpleName}",
                         )
-                        toast("Sign-in failed: " + it.localizedMessage)
+                        authBusy = false
+                        authError = "Sign-in failed. Please check your connection and try again."
+                        render()
                     }
             } catch (e: Exception) {
                 val status = (e as? ApiException)?.statusCode
@@ -440,11 +474,12 @@ class MainActivity : Activity() {
                     "LogItAuth",
                     "Google sign-in result: status=$status type=${e.javaClass.simpleName}",
                 )
+                authBusy = false
                 if (status != GoogleSignInStatusCodes.SIGN_IN_CANCELLED) {
-                    toast(
+                    authError =
                         "Google sign-in failed${status?.let { " (code $it)" } ?: ""}. Please try again."
-                    )
                 }
+                render()
             }
         }
     }
