@@ -22,7 +22,6 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import {
-  Download,
   Plus,
   GripVertical,
   Moon,
@@ -33,6 +32,7 @@ import {
 import { auth, db } from "@/lib/firebase";
 import { count, total, dayKey, change, streak } from "@/lib/model.mjs";
 import { Button } from "@/components/ui/button";
+import { AndroidDownload } from "@/components/android-download";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -485,13 +485,7 @@ export default function Dashboard() {
             LogIt
           </a>
           <div className="toolbar">
-            <Hint label="Download Android app">
-              <Button asChild variant="ghost" size="icon">
-                <a href="/download" aria-label="Download Android app">
-                  <Download />
-                </a>
-              </Button>
-            </Hint>
+            <AndroidDownload />
             <Hint label={dark ? "Use light theme" : "Use dark theme"}>
               <Button
                 variant="ghost"
