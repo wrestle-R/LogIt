@@ -429,3 +429,31 @@ h3 {
 .activities { grid-template-columns: minmax(0, 1fr); }
 .activity, .graph-area, .graph-viewport, .heatmap-fit { min-width: 0; }
 .activity footer [data-slot="select-trigger"] { width: 104px; }
+
+/* A light material finish on the existing layout. */
+.activity {
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 5%, transparent),
+    0 2px 4px #0000000d;
+}
+.graph-viewport {
+  border-radius: 4px;
+  box-shadow: inset 0 1px 3px #00000014;
+}
+.log-action.sk-button {
+  min-height: 36px;
+  padding: 8px 12px;
+  gap: 8px;
+  font-size: 14px;
+  border-radius: 8px;
+  --sk-secondary: var(--primary);
+  --sk-secondary-ink: var(--primary-foreground);
+  --sk-secondary-raised: color-mix(in srgb, var(--primary) 96%, white);
+  --sk-secondary-base: color-mix(in srgb, var(--primary) 78%, black);
+  --sk-edge: color-mix(in srgb, var(--primary) 70%, black);
+  box-shadow: inset 0 1px 0 #ffffff30, 0 2px 0 var(--sk-secondary-base), 0 3px 4px #00000018;
+}
+.log-action.sk-button svg { width: 16px; height: 16px; }
+.log-action.sk-button:active { transform: translateY(2px); box-shadow: inset 0 1px 2px #00000025; }
+@media (prefers-reduced-motion: reduce) {
+  .log-action.sk-button { transition: none; }
+}

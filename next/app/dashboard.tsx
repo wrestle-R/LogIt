@@ -32,6 +32,7 @@ import {
 import { auth, db } from "@/lib/firebase";
 import { count, total, dayKey, change, streak } from "@/lib/model.mjs";
 import { Button } from "@/components/ui/button";
+import { SkeuoButton } from "@/components/ui/skeuo-button";
 import { AndroidDownload } from "@/components/android-download";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -671,7 +672,7 @@ export default function Dashboard() {
                                     try { if (day) await log(h, -1, day); } catch (e) { error(e); }
                                     finally { setBusy(false); }
                                   }}>Undo</Button>
-                                <Button onClick={() => setConfirm(h)}><Plus /> Log today</Button>
+                                <SkeuoButton className="log-action" onClick={() => setConfirm(h)}><Plus /> Log today</SkeuoButton>
                               </div>
                               <Select
                                 value={String(h.color || 0)}
