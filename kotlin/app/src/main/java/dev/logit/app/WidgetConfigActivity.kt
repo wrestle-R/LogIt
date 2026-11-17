@@ -108,12 +108,13 @@ class WidgetConfigActivity : Activity() {
                 old.optInt("pageIndex", 0).coerceIn(0, maxOf(0, (Store.habits.size - 1) / 4)),
             )
         val color = select("Colour", Theme.names, old.optInt("color", 0).coerceIn(0, 9))
-        val periods = intArrayOf(4, 8, 16, 26, 52)
+        val periods = intArrayOf(0, 4, 8, 16, 26, 52)
         val timeframe =
             select(
                 "Timeframe",
-                arrayOf("4 weeks", "8 weeks", "16 weeks", "26 weeks", "52 weeks"),
-                periods.indexOf(old.optInt("weeks", 16)).coerceAtLeast(0),
+                arrayOf("Fit width", "4 weeks", "8 weeks", "16 weeks", "26 weeks", "52 weeks"),
+                if (old.optBoolean("fitWidth", true)) 0
+                else periods.indexOf(old.optInt("weeks", 16)).coerceAtLeast(0),
             )
         val theme =
             select(
@@ -144,7 +145,7 @@ class WidgetConfigActivity : Activity() {
                     sample.setImageBitmap(
                         Theme.graph(
                             Store.habits.first(),
-                            periods[timeframe.selectedItemPosition],
+                            periods[timeframe.selectedItemPosition].let { if (it == 0) 52 else it },
                             sample.width,
                             sample.height,
                             color.selectedItemPosition,
@@ -182,6 +183,7 @@ class WidgetConfigActivity : Activity() {
                         )
                         .put("owner", if (Store.demo) "demo" else Store.auth.currentUser!!.uid)
                         .put("color", color.selectedItemPosition)
+                        .put("fitWidth", timeframe.selectedItemPosition == 0)
                         .put("weeks", periods[timeframe.selectedItemPosition])
                         .put("theme", if (theme.selectedItemPosition == 0) "dark" else "light")
                         .put("gradient", gradient.isChecked)

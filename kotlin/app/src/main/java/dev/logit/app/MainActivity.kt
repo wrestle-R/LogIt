@@ -144,10 +144,12 @@ class MainActivity : Activity() {
         val heading =
             LinearLayout(this).apply {
                 orientation = 1
-                addView(label("Your activities", 18f).apply { setTypeface(null, 1) })
+                addView(label("Your activities", 22f).apply { setTypeface(null, 1) })
                 addView(
                     label(
-                        "${Store.habits.size} ${if(Store.habits.size==1)"activity"else"activities"} · ${Store.habits.sumOf{it.count(Dates.today())}} today",
+                        java.time.LocalDate.now()
+                            .format(java.time.format.DateTimeFormatter.ofPattern("EEE, d MMM")) +
+                            " · ${Store.habits.size} ${if(Store.habits.size==1)"activity"else"activities"}",
                         12f,
                         Theme.muted,
                     )
@@ -155,10 +157,62 @@ class MainActivity : Activity() {
             }
         section.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
         section.addView(
-            icon("+", "Add activity") { add() },
-            LinearLayout.LayoutParams(dp(44), dp(44)),
+            button("+ Add") { add() }
+                .apply {
+                    textSize = 14f
+                    setPadding(dp(14), 0, dp(14), 0)
+                    stateListAnimator = null
+                },
+            LinearLayout.LayoutParams(-2, dp(44)),
         )
         root.addView(section)
+        val last = Store.lastLog()
+        val tools = row().apply { setPadding(0, 0, 0, dp(12)) }
+        val periods = intArrayOf(4, 8, 16, 26, 52)
+        val historyWeeks = Store.prefs.getInt("historyWeeks", 52)
+        tools.addView(
+            ChoiceView(
+                    this,
+                    periods.map { "$it weeks" }.toTypedArray(),
+                    periods.indexOf(historyWeeks).coerceAtLeast(0),
+                )
+                .apply {
+                    onChange = {
+                        Store.prefs
+                            .edit()
+                            .putInt("historyWeeks", periods[selectedItemPosition])
+                            .apply()
+                        render()
+                    }
+                    contentDescription = "Activity history timeframe"
+                },
+            LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(12) },
+        )
+        tools.addView(
+            button("Undo last") {
+                    if (last != null)
+                        Store.undoLast(last.id) { error -> toast(error ?: "Last log undone") }
+                }
+                .apply {
+                    textSize = 13f
+                    setPadding(dp(12), 0, dp(12), 0)
+                    background =
+                        Theme.shape(Theme.card, dp(10).toFloat()).apply {
+                            setStroke(
+                                dp(1),
+                                if (Theme.light()) 0xffd4d4d8.toInt() else 0xff3f3f46.toInt(),
+                            )
+                        }
+                    setTextColor(Theme.text)
+                    stateListAnimator = null
+                    isEnabled = last != null
+                    alpha = if (last == null) .4f else 1f
+                    contentDescription = "Undo last log on this device"
+                    tooltipText = "Undo the most recent log from this device"
+                },
+            LinearLayout.LayoutParams(-2, dp(44)),
+        )
+        root.addView(tools)
         if (OfflineLogQueue.pendingCount() > 0)
             root.addView(
                 label(
@@ -179,7 +233,13 @@ class MainActivity : Activity() {
             val card =
                 LinearLayout(this).apply {
                     orientation = 1
-                    background = Theme.shape(Theme.card, dp(20).toFloat())
+                    background =
+                        Theme.shape(Theme.card, dp(14).toFloat()).apply {
+                            setStroke(
+                                dp(1),
+                                if (Theme.light()) 0xffe4e4e7.toInt() else 0xff27272a.toInt(),
+                            )
+                        }
                     setPadding(dp(17), dp(14), dp(17), dp(16))
                     tag = h.id
                 }
@@ -193,13 +253,6 @@ class MainActivity : Activity() {
                             maxLines = 1
                             ellipsize = android.text.TextUtils.TruncateAt.END
                         }
-                    )
-                    addView(
-                        label(
-                            "${h.count(Dates.today())} today · ${h.total()} total",
-                            12f,
-                            Theme.muted,
-                        )
                     )
                 }
             top.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
@@ -264,27 +317,37 @@ class MainActivity : Activity() {
             }
             val plot = FrameLayout(this)
             plot.addView(
-                HeatmapView(this, h, 20).apply {
+                HeatmapView(this, h, historyWeeks).apply {
                     contentDescription = "${h.name} history, latest weeks that fit"
                 },
                 FrameLayout.LayoutParams(-1, -1),
             )
-            plot.addView(
-                button("+ Log") {
-                        startActivity(Intent(this, LogActivity::class.java).putExtra("habit", h.id))
-                    }
-                    .apply {
-                        textSize = 14f
-                        minHeight = dp(44)
-                        setPadding(dp(16), 0, dp(16), 0)
-                        elevation = dp(3).toFloat()
-                    },
-                FrameLayout.LayoutParams(dp(100), dp(46), Gravity.TOP or Gravity.START).apply {
-                    leftMargin = dp(3)
-                    topMargin = dp(3)
+            card.addView(
+                plot,
+                LinearLayout.LayoutParams(-1, dp(116)).apply {
+                    topMargin = dp(14)
+                    bottomMargin = dp(12)
                 },
             )
-            card.addView(plot, LinearLayout.LayoutParams(-1, dp(116)).apply { topMargin = dp(16) })
+            val actions = row()
+            actions.addView(
+                label("${h.count(Dates.today())} today", 13f, Theme.muted),
+                LinearLayout.LayoutParams(0, -2, 1f),
+            )
+            actions.addView(
+                button("+ Log today") {
+                        Store.log(h.id, 1) { error -> if (error != null) toast(error) }
+                    }
+                    .apply {
+                        textSize = 13f
+                        setPadding(dp(16), 0, dp(16), 0)
+                        background = Theme.shape(Theme.text, dp(10).toFloat())
+                        stateListAnimator = null
+                        contentDescription = "Log ${h.name} for today"
+                    },
+                LinearLayout.LayoutParams(-2, dp(44)),
+            )
+            card.addView(actions)
             root.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         }
         if (Store.habits.size > 4) {
@@ -313,12 +376,6 @@ class MainActivity : Activity() {
             )
             root.addView(nav)
         }
-        root.addView(
-            label("Hold ⠿ to reorder. One day at a time.", 11f, Theme.muted).apply {
-                gravity = Gravity.CENTER
-                setPadding(0, dp(14), 0, 0)
-            }
-        )
     }
 
     private fun add() {

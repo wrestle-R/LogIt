@@ -124,6 +124,14 @@ object Widgets {
             else emptyList()
         val rv = RemoteViews(c.packageName, R.layout.widget)
         rv.removeAllViews(R.id.rows)
+        if (quick)
+            rv.setViewPadding(
+                R.id.root,
+                (8 * c.resources.displayMetrics.density).toInt(),
+                (8 * c.resources.displayMetrics.density).toInt(),
+                (8 * c.resources.displayMetrics.density).toInt(),
+                (8 * c.resources.displayMetrics.density).toInt(),
+            )
         rv.setOnClickPendingIntent(R.id.root, click(c, id, null, false))
         val light = config.optString("theme", "dark") == "light"
         val fg = if (light) 0xff18181b.toInt() else 0xfffafafa.toInt()
@@ -146,7 +154,9 @@ object Widgets {
         } else {
             val width = requestedWidth.coerceAtLeast(100)
             val height = requestedHeight.coerceAtLeast(60)
-            val weeks = config.optInt("weeks", 16).coerceIn(4, 52)
+            val weeks =
+                if (config.optBoolean("fitWidth", true)) 52
+                else config.optInt("weeks", 16).coerceIn(4, 52)
             val collection =
                 if (android.os.Build.VERSION.SDK_INT >= 31 && hs.size > 1)
                     RemoteViews.RemoteCollectionItems.Builder()
@@ -160,7 +170,7 @@ object Widgets {
                 val row =
                     RemoteViews(
                         c.packageName,
-                        if (quick && hs.size == 1 && height >= 144 && width < 280)
+                        if (quick && hs.size == 1 && height >= 120 && width < 280)
                             R.layout.widget_quick_tall
                         else if (quick) R.layout.widget_quick_compact
                         else if (collection != null) R.layout.widget_list_row
@@ -169,51 +179,41 @@ object Widgets {
                 if (quick && hs.size == 1 && android.os.Build.VERSION.SDK_INT >= 31)
                     row.setViewLayoutHeight(
                         R.id.row,
-                        (height - 24).coerceAtLeast(56).toFloat(),
+                        (height - 16).coerceAtLeast(56).toFloat(),
                         android.util.TypedValue.COMPLEX_UNIT_DIP,
                     )
                 if (quick) {
-                    val icon =
-                        when {
-                            h.name.contains("guitar", true) || h.name.contains("music", true) ->
-                                "🎸"
-                            h.name.contains("read", true) -> "📖"
-                            h.name.contains("run", true) -> "🏃"
-                            h.name.contains("walk", true) -> "🚶"
-                            h.name.contains("gym", true) || h.name.contains("workout", true) -> "💪"
-                            else -> h.name.take(1).uppercase()
-                        }
-                    row.setTextViewText(R.id.activity_icon, icon)
-                    row.setTextColor(R.id.activity_icon, Theme.colors[h.color.coerceIn(0, 9)])
-                    row.setTextColor(
-                        R.id.quick_log,
-                        if (light) 0xff166534.toInt() else 0xff86efac.toInt(),
+                    row.setViewVisibility(
+                        R.id.quick_hint,
+                        if (height < 100 && hs.size == 1) View.GONE else View.VISIBLE,
                     )
+                    row.setInt(R.id.quick_log, "setColorFilter", fg)
+                    row.setTextColor(R.id.quick_hint, muted)
                     row.setInt(
                         R.id.row,
                         "setBackgroundResource",
-                        if (light) R.drawable.widget_tile_light else R.drawable.widget_tile,
-                    )
-                    row.setInt(
-                        R.id.quick_log,
-                        "setBackgroundResource",
-                        if (light) R.drawable.widget_plus_light else R.drawable.widget_plus,
+                        if (hs.size == 1) android.R.color.transparent
+                        else if (light) R.drawable.widget_tile_light else R.drawable.widget_tile,
                     )
                 }
                 row.setTextViewText(R.id.title, h.name)
                 row.setTextViewText(R.id.count, "${h.count(Dates.today())} today")
                 row.setTextColor(R.id.title, fg)
                 row.setTextColor(R.id.count, muted)
-                row.setOnClickPendingIntent(R.id.row, click(c, id, h.id, false))
+                row.setOnClickPendingIntent(R.id.row, click(c, id, h.id, quick))
                 row.setViewVisibility(R.id.quick_log, if (quick) View.VISIBLE else View.GONE)
                 row.setViewVisibility(R.id.plot, if (quick) View.GONE else View.VISIBLE)
                 row.setViewVisibility(R.id.overlay_log, if (log) View.VISIBLE else View.GONE)
-                row.setContentDescription(R.id.quick_log, "Log ${h.name} for today")
+                row.setContentDescription(
+                    R.id.row,
+                    if (quick) "Log ${h.name} for today" else "Open ${h.name} in LogIt",
+                )
+                row.setContentDescription(R.id.quick_log, "Open ${h.name} in LogIt")
                 row.setContentDescription(R.id.overlay_log, "Log ${h.name} for today")
-                row.setOnClickPendingIntent(R.id.quick_log, click(c, id, h.id, true))
+                row.setOnClickPendingIntent(R.id.quick_log, click(c, id, h.id, false))
                 row.setOnClickPendingIntent(R.id.overlay_log, click(c, id, h.id, true))
                 if (!quick && hs.size == 1 && android.os.Build.VERSION.SDK_INT >= 31) {
-                    val compact = height < 166
+                    val compact = height < 176
                     row.setViewVisibility(
                         R.id.widget_heading,
                         if (compact) View.GONE else View.VISIBLE,
@@ -226,6 +226,24 @@ object Widgets {
                     )
                 }
                 if (!quick) {
+                    if (android.os.Build.VERSION.SDK_INT >= 31) {
+                        val cols = minOf(weeks, maxOf(1, (graphWidth + 3) / 17))
+                        val inset = ((graphWidth - (cols * 17 - 3)) / 2f).coerceAtLeast(0f)
+                        val px = (minOf(inset, 8f) * c.resources.displayMetrics.density).toInt()
+                        row.setViewPadding(R.id.widget_heading, px, 0, px, 0)
+                        row.setViewLayoutMargin(
+                            R.id.overlay_log,
+                            RemoteViews.MARGIN_START,
+                            inset,
+                            android.util.TypedValue.COMPLEX_UNIT_DIP,
+                        )
+                        row.setViewLayoutMargin(
+                            R.id.overlay_log,
+                            RemoteViews.MARGIN_TOP,
+                            0f,
+                            android.util.TypedValue.COMPLEX_UNIT_DIP,
+                        )
+                    }
                     val graph =
                         Theme.graph(
                             h,
@@ -255,7 +273,7 @@ object Widgets {
                         )
                     row.setOnClickFillInIntent(
                         R.id.row,
-                        Intent().putExtra("habit", h.id).putExtra("log", false),
+                        Intent().putExtra("habit", h.id).putExtra("log", quick),
                     )
                     row.setOnClickFillInIntent(
                         R.id.graph,
@@ -263,7 +281,7 @@ object Widgets {
                     )
                     row.setOnClickFillInIntent(
                         R.id.quick_log,
-                        Intent().putExtra("habit", h.id).putExtra("log", true),
+                        Intent().putExtra("habit", h.id).putExtra("log", false),
                     )
                     row.setOnClickFillInIntent(
                         R.id.overlay_log,
