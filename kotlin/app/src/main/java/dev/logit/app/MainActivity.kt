@@ -128,61 +128,16 @@ class MainActivity : Activity() {
             )
         root.addView(header)
         if (!Store.ready) {
-            val intro =
-                LinearLayout(this).apply {
-                    orientation = 1
-                    setPadding(0, dp(20), 0, dp(20))
+            val login =
+                column().apply {
+                    setPadding(0, dp(28), 0, dp(16))
+                    addView(label("Welcome to LogIt", 24f).apply { setTypeface(null, 1) })
+                    addView(label("Sign in to start tracking your habits", 14f, Theme.muted))
                 }
-            intro.addView(
-                ImageView(this).apply {
-                    setImageResource(R.drawable.ic_logit)
-                    background = Theme.shape(Theme.card, dp(20).toFloat())
-                    contentDescription = "LogIt"
-                },
-                LinearLayout.LayoutParams(dp(76), dp(76)),
-            )
-            intro.addView(
-                label("A little, every day.", 30f).apply {
-                    setTypeface(null, 1)
-                    letterSpacing = -.035f
-                    setPadding(0, dp(18), 0, dp(6))
-                }
-            )
-            intro.addView(
-                label(
-                    "Your activities. Your progress.\nRight where you need them.",
-                    15f,
-                    Theme.muted,
-                )
-            )
-            root.addView(intro)
-            val preview =
-                LinearLayout(this).apply {
-                    orientation = 1
-                    background = Theme.shape(Theme.card, dp(18).toFloat())
-                    setPadding(dp(16), dp(12), dp(16), dp(12))
-                    addView(label("A rhythm you can see", 14f).apply { setTypeface(null, 1) })
-                    addView(label("Activity history · illustration", 11f, Theme.muted))
-                }
-            val today = java.time.LocalDate.parse(Dates.today())
-            val values =
-                (0..111)
-                    .filter { it % 5 != 0 }
-                    .associate { today.minusDays(it.toLong()).toString() to (it % 4 + 1).toLong() }
-            preview.addView(
-                HeatmapView(this, Habit("illustration", "", counts = values), 16),
-                LinearLayout.LayoutParams(-1, dp(116)).apply { topMargin = dp(12) },
-            )
-            root.addView(preview, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(20) })
+            root.addView(login)
             root.addView(
                 button("Continue with Google") { signIn() },
-                LinearLayout.LayoutParams(-1, dp(50)),
-            )
-            root.addView(
-                label("Your existing LogIt account works here.", 12f, Theme.muted).apply {
-                    gravity = Gravity.CENTER
-                    setPadding(0, dp(10), 0, 0)
-                }
+                LinearLayout.LayoutParams(-1, dp(48)),
             )
             return
         }
@@ -432,7 +387,7 @@ class MainActivity : Activity() {
     @Suppress("DEPRECATION")
     private fun signIn() {
         if (!Store.configured) {
-            toast("Android Firebase config is pending. Demo remains available.")
+            toast("Sign-in is unavailable: Firebase configuration is missing.")
             return
         }
         val rid = resources.getIdentifier("default_web_client_id", "string", packageName)
@@ -445,13 +400,23 @@ class MainActivity : Activity() {
                 .requestIdToken(getString(rid))
                 .requestEmail()
                 .build()
-        startActivityForResult(GoogleSignIn.getClient(this, options).signInIntent, 42)
+        android.util.Log.i("LogItAuth", "Opening Google account chooser")
+        try {
+            startActivityForResult(GoogleSignIn.getClient(this, options).signInIntent, 42)
+        } catch (e: Exception) {
+            android.util.Log.w(
+                "LogItAuth",
+                "Account chooser launch failed: ${e.javaClass.simpleName}",
+            )
+            toast("Could not open Google sign-in. Please try again.")
+        }
     }
 
     @Deprecated("Legacy Google sign-in result")
     override fun onActivityResult(request: Int, result: Int, data: Intent?) {
         super.onActivityResult(request, result, data)
         if (request == 42) {
+            android.util.Log.i("LogItAuth", "Account chooser returned result=$result")
             try {
                 val account =
                     GoogleSignIn.getSignedInAccountFromIntent(data)
@@ -459,9 +424,27 @@ class MainActivity : Activity() {
                 val token = account.idToken ?: error("Google returned no token")
                 Store.auth
                     .signInWithCredential(GoogleAuthProvider.getCredential(token, null))
-                    .addOnFailureListener { toast("Sign-in failed: " + it.localizedMessage) }
+                    .addOnSuccessListener(this) {
+                        android.util.Log.i("LogItAuth", "Firebase sign-in completed")
+                    }
+                    .addOnFailureListener(this) {
+                        android.util.Log.w(
+                            "LogItAuth",
+                            "Firebase sign-in failed: ${it.javaClass.simpleName}",
+                        )
+                        toast("Sign-in failed: " + it.localizedMessage)
+                    }
             } catch (e: Exception) {
-                toast("Sign-in cancelled or failed: " + e.localizedMessage)
+                val status = (e as? ApiException)?.statusCode
+                android.util.Log.w(
+                    "LogItAuth",
+                    "Google sign-in result: status=$status type=${e.javaClass.simpleName}",
+                )
+                if (status != GoogleSignInStatusCodes.SIGN_IN_CANCELLED) {
+                    toast(
+                        "Google sign-in failed${status?.let { " (code $it)" } ?: ""}. Please try again."
+                    )
+                }
             }
         }
     }

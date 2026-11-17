@@ -234,6 +234,8 @@ export default function Dashboard() {
     [weeks, setWeeks] = useState("16"),
     [gradient, setGradient] = useState(false),
     [adding, setAdding] = useState(false),
+    [authOpen, setAuthOpen] = useState(false),
+    [authError, setAuthError] = useState(""),
     [name, setName] = useState(""),
     [confirm, setConfirm] = useState<Habit | null>(null),
     [busy, setBusy] = useState(false),
@@ -515,94 +517,58 @@ export default function Dashboard() {
             )}
           </div>
         </header>
-        {!user && !demo ? (
-          <section className="login">
-            <div className="login-copy">
-              <Image src="/logo.svg" alt="" width={64} height={64} />
-              <h1>A little, every day.</h1>
+        <section className="persistence" aria-labelledby="persistence-title">
+          <div className="definition-title">
+            <h1 id="persistence-title">persistence</h1>
+            <span>/pərˈsɪstəns/</span>
+          </div>
+          <Badge variant="secondary">noun</Badge>
+          <p>
+            the fact of continuing in an opinion or course of action in spite of
+            difficulty or opposition.
+          </p>
+          <p className="definition-quote">
+            “Persistence and endurance will make you omnipotent.”
+          </p>
+        </section>
+        <>
+          {demo && (
+            <p className="demo-note">
+              Local demo. Your account data stays separate.
+            </p>
+          )}
+          {pending.length > 0 && (
+            <p role="status" className="pending-note">
+              {pending.length} logs saved on this device · sync pending
+            </p>
+          )}
+          {syncError && (
+            <p role="alert" className="error">
+              Could not sync: {syncError}
+            </p>
+          )}
+          <section className="activity-controls">
+            <div>
+              <h2>Your activities</h2>
               <p>
-                Your activities. Your progress.
-                <br />
-                Right where you need them.
+                {habits.length} activities ·{" "}
+                {habits.reduce((s, h) => s + count(h, dayKey()), 0)} logs today
               </p>
             </div>
-            <div className="login-history">
-              <div className="activity-heading">
-                <b>A rhythm you can see</b>
-                <span className="eyebrow">ILLUSTRATION</span>
-              </div>
-              <div className="graph-viewport">
-                <div
-                  className="heatmap"
-                  style={{ gridTemplateColumns: "repeat(16,14px)" }}
-                  aria-label="Illustration of an activity heatmap"
-                >
-                  {Array.from({ length: 112 }, (_, i) => (
-                    <span
-                      key={i}
-                      style={
-                        i % 5
-                          ? {
-                              background: palette[0],
-                              opacity: 0.25 + (i % 4) * 0.25,
-                            }
-                          : undefined
-                      }
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
             <Button
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await signInWithPopup(auth, new GoogleAuthProvider());
-                } catch (e) {
-                  error(e);
-                } finally {
-                  setBusy(false);
+              onClick={() => {
+                if (user || demo) setAdding(true);
+                else {
+                  setAuthError("");
+                  setAuthOpen(true);
                 }
               }}
             >
-              Continue with Google
+              <Plus data-icon="inline-start" />
+              Add Habit
             </Button>
-            <p className="login-trust">
-              Your existing LogIt account works here.
-            </p>
           </section>
-        ) : (
-          <>
-            {demo && (
-              <p className="demo-note">
-                Local demo. Your account data stays separate.
-              </p>
-            )}
-            {pending.length > 0 && (
-              <p role="status" className="pending-note">
-                {pending.length} logs saved on this device · sync pending
-              </p>
-            )}
-            {syncError && (
-              <p role="alert" className="error">
-                Could not sync: {syncError}
-              </p>
-            )}
-            <section className="activity-controls">
-              <div>
-                <h2>Your activities</h2>
-                <p>
-                  {habits.length} activities ·{" "}
-                  {habits.reduce((s, h) => s + count(h, dayKey()), 0)} logs
-                  today
-                </p>
-              </div>
-              <Button onClick={() => setAdding(true)}>
-                <Plus data-icon="inline-start" />
-                Activity
-              </Button>
-            </section>
+          {(user || demo) && (
             <div className="filters">
               <Label htmlFor="timeframe">History</Label>
               <Select value={weeks} onValueChange={setWeeks}>
@@ -627,133 +593,168 @@ export default function Dashboard() {
                 {gradient ? "Gradient" : "Solid"} colours
               </Button>
             </div>
-            {!loaded ? (
-              <p role="status">Loading your activities…</p>
-            ) : habits.length === 0 ? (
-              <section className="empty">
-                <h3>A clean slate.</h3>
-                <p>Add your first activity and give today a little colour.</p>
-              </section>
-            ) : (
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragEnd={({ active, over }) => {
-                  if (over) void reorder(String(active.id), String(over.id));
-                }}
+          )}
+          {!loaded ? (
+            <p role="status">Loading your activities…</p>
+          ) : habits.length === 0 ? (
+            <section className="empty">
+              <p>No habits yet. Create your first habit to get started!</p>
+            </section>
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={({ active, over }) => {
+                if (over) void reorder(String(active.id), String(over.id));
+              }}
+            >
+              <SortableContext
+                items={habits
+                  .slice(currentPage * 4, currentPage * 4 + 4)
+                  .map((h) => h.id)}
+                strategy={verticalListSortingStrategy}
               >
-                <SortableContext
-                  items={habits
+                <div className="activities">
+                  {habits
                     .slice(currentPage * 4, currentPage * 4 + 4)
-                    .map((h) => h.id)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  <div className="activities">
-                    {habits
-                      .slice(currentPage * 4, currentPage * 4 + 4)
-                      .map((h) => (
-                        <SortableActivity key={h.id} id={h.id}>
-                          {(sort) => (
-                            <>
-                              <div className="activity-heading">
-                                <div>
-                                  <h3>{h.name}</h3>
-                                  <p>
-                                    {total(h)} total logs · {streak(h)} day
-                                    streak
-                                  </p>
-                                </div>
-                                <div className="toolbar">
-                                  <Badge variant="secondary">
-                                    {count(h, dayKey())} today
-                                  </Badge>
-                                  <Hint label="Drag to reorder, or use the up and down arrow keys">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      {...sort.attributes}
-                                      {...sort.listeners}
-                                      style={{ touchAction: "none" }}
-                                      aria-label={`Drag ${h.name} to reorder`}
-                                    >
-                                      <GripVertical />
-                                    </Button>
-                                  </Hint>
-                                </div>
+                    .map((h) => (
+                      <SortableActivity key={h.id} id={h.id}>
+                        {(sort) => (
+                          <>
+                            <div className="activity-heading">
+                              <div>
+                                <h3>{h.name}</h3>
+                                <p>
+                                  {total(h)} total logs · {streak(h)} day streak
+                                </p>
                               </div>
-                              <div className="graph-area">
-                                <div className="graph-viewport">
-                                  <Heatmap
-                                    habit={h}
-                                    weeks={Number(weeks)}
-                                    gradient={gradient}
-                                  />
-                                </div>
-                                <Button
-                                  className="overlay-log"
-                                  onClick={() => setConfirm(h)}
-                                >
-                                  <Plus data-icon="inline-start" />
-                                  Log
-                                </Button>
-                              </div>
-                              <footer>
-                                <Select
-                                  value={String(h.color || 0)}
-                                  onValueChange={(v) => void color(h, v)}
-                                >
-                                  <SelectTrigger
-                                    aria-label={`Colour for ${h.name}`}
-                                    className="w-32"
+                              <div className="toolbar">
+                                <Badge variant="secondary">
+                                  {count(h, dayKey())} today
+                                </Badge>
+                                <Hint label="Drag to reorder, or use the up and down arrow keys">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    {...sort.attributes}
+                                    {...sort.listeners}
+                                    style={{ touchAction: "none" }}
+                                    aria-label={`Drag ${h.name} to reorder`}
                                   >
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectGroup>
-                                      {names.map((n, i) => (
-                                        <SelectItem key={n} value={String(i)}>
-                                          <span
-                                            className="swatch"
-                                            style={{ background: palette[i] }}
-                                          />
-                                          {n}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectGroup>
-                                  </SelectContent>
-                                </Select>
-                              </footer>
-                            </>
-                          )}
-                        </SortableActivity>
-                      ))}
-                  </div>
-                </SortableContext>
-              </DndContext>
+                                    <GripVertical />
+                                  </Button>
+                                </Hint>
+                              </div>
+                            </div>
+                            <div className="graph-area">
+                              <div className="graph-viewport">
+                                <Heatmap
+                                  habit={h}
+                                  weeks={Number(weeks)}
+                                  gradient={gradient}
+                                />
+                              </div>
+                              <Button
+                                className="overlay-log"
+                                onClick={() => setConfirm(h)}
+                              >
+                                <Plus data-icon="inline-start" />
+                                Log
+                              </Button>
+                            </div>
+                            <footer>
+                              <Select
+                                value={String(h.color || 0)}
+                                onValueChange={(v) => void color(h, v)}
+                              >
+                                <SelectTrigger
+                                  aria-label={`Colour for ${h.name}`}
+                                  className="w-32"
+                                >
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectGroup>
+                                    {names.map((n, i) => (
+                                      <SelectItem key={n} value={String(i)}>
+                                        <span
+                                          className="swatch"
+                                          style={{ background: palette[i] }}
+                                        />
+                                        {n}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectGroup>
+                                </SelectContent>
+                              </Select>
+                            </footer>
+                          </>
+                        )}
+                      </SortableActivity>
+                    ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          )}
+          {pages > 1 && (
+            <nav className="pagination" aria-label="Activity pages">
+              <Button
+                variant="outline"
+                disabled={currentPage === 0}
+                onClick={() => setPage(currentPage - 1)}
+              >
+                Previous
+              </Button>
+              <span>
+                {currentPage + 1} / {pages}
+              </span>
+              <Button
+                variant="outline"
+                disabled={currentPage + 1 >= pages}
+                onClick={() => setPage(currentPage + 1)}
+              >
+                Next
+              </Button>
+            </nav>
+          )}
+        </>
+        <Dialog open={authOpen} onOpenChange={setAuthOpen}>
+          <DialogContent className="auth-dialog">
+            <DialogHeader>
+              <DialogTitle>Welcome to LogIt</DialogTitle>
+              <DialogDescription>
+                Sign in to start tracking your habits
+              </DialogDescription>
+            </DialogHeader>
+            {authError && (
+              <p role="alert" className="error">
+                {authError}
+              </p>
             )}
-            {pages > 1 && (
-              <nav className="pagination" aria-label="Activity pages">
-                <Button
-                  variant="outline"
-                  disabled={currentPage === 0}
-                  onClick={() => setPage(currentPage - 1)}
-                >
-                  Previous
-                </Button>
-                <span>
-                  {currentPage + 1} / {pages}
-                </span>
-                <Button
-                  variant="outline"
-                  disabled={currentPage + 1 >= pages}
-                  onClick={() => setPage(currentPage + 1)}
-                >
-                  Next
-                </Button>
-              </nav>
-            )}
-          </>
-        )}
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setAuthError("");
+                try {
+                  await signInWithPopup(auth, new GoogleAuthProvider());
+                  setAuthOpen(false);
+                } catch (e) {
+                  setAuthError(
+                    e instanceof Error
+                      ? e.message
+                      : "Sign-in failed. Please try again.",
+                  );
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? "Signing in…" : "Continue with Google"}
+            </Button>
+          </DialogContent>
+        </Dialog>
         <Dialog
           open={adding}
           onOpenChange={(v) => {

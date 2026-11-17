@@ -1,4 +1,4 @@
-const CACHE='logit-shell-v1';
+const CACHE='logit-shell-v2';
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/','/logo.svg'])).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('logit-shell-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('message',event=>{if(event.data?.type==='CACHE_ASSETS')event.waitUntil(caches.open(CACHE).then(c=>Promise.all(event.data.resources.filter(u=>{try{const x=new URL(u);return x.origin===self.location.origin&&x.pathname.startsWith('/_next/static/')}catch{return false}}).map(u=>c.add(u).catch(()=>{})))))});
