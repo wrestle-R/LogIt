@@ -39,21 +39,72 @@ object Widgets {
     }
 
     private fun click(c: Context, id: Int, habit: String?, log: Boolean): PendingIntent {
-        val i =
-            Intent(c, if (log) LogActivity::class.java else MainActivity::class.java)
-                .setAction("widget:$id:$habit:$log")
-                .putExtra("habit", habit)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        if (log)
+            return PendingIntent.getBroadcast(
+                c,
+                0,
+                Intent(c, WidgetLogReceiver::class.java)
+                    .setAction("widget-log:$id:$habit")
+                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                    .putExtra("habit", habit),
+                flags,
+            )
         return PendingIntent.getActivity(
             c,
             0,
-            i,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            Intent(c, MainActivity::class.java)
+                .setAction("widget-open:$id:$habit")
+                .putExtra("habit", habit)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            flags,
         )
     }
 
     fun update(c: Context, m: AppWidgetManager, id: Int) {
-        val info = m.getAppWidgetInfo(id) ?: return
+        if (m.getAppWidgetInfo(id) == null) return
+        val options = m.getAppWidgetOptions(id)
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            val sizes =
+                options
+                    .getParcelableArrayList<android.util.SizeF>(
+                        AppWidgetManager.OPTION_APPWIDGET_SIZES
+                    )
+                    ?.distinct()
+                    ?.filter { it.width > 0 && it.height > 0 }
+                    ?.take(4)
+            if (!sizes.isNullOrEmpty()) {
+                m.updateAppWidget(
+                    id,
+                    RemoteViews(
+                        sizes.associateWith { size ->
+                            create(c, m, id, size.width.toInt(), size.height.toInt())
+                        }
+                    ),
+                )
+                return
+            }
+        }
+        m.updateAppWidget(
+            id,
+            create(
+                c,
+                m,
+                id,
+                options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 300),
+                options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 180),
+            ),
+        )
+    }
+
+    private fun create(
+        c: Context,
+        m: AppWidgetManager,
+        id: Int,
+        requestedWidth: Int,
+        requestedHeight: Int,
+    ): RemoteViews {
+        val info = m.getAppWidgetInfo(id)!!
         val kind = info.provider.shortClassName
         val quick = kind.endsWith("QuickWidget")
         val log = kind.endsWith("LogGraphWidget")
@@ -93,26 +144,24 @@ object Widgets {
             row.setViewVisibility(R.id.quick_log, View.GONE)
             rv.addView(R.id.rows, row)
         } else {
-            val opts = m.getAppWidgetOptions(id)
-            val width =
-                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 300).coerceAtLeast(160)
-            val height =
-                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 200).coerceAtLeast(80)
+            val width = requestedWidth.coerceAtLeast(100)
+            val height = requestedHeight.coerceAtLeast(60)
             val weeks = config.optInt("weeks", 16).coerceIn(4, 52)
             val collection =
-                if (android.os.Build.VERSION.SDK_INT >= 31)
+                if (android.os.Build.VERSION.SDK_INT >= 31 && hs.size > 1)
                     RemoteViews.RemoteCollectionItems.Builder()
                         .setHasStableIds(true)
                         .setViewTypeCount(1)
                 else null
-            val multiGrid = !quick && hs.size > 1
-            val rowHeight = if (quick) 60 else 148
+            val multiGrid = hs.size > 1 && width >= (if (quick) 260 else 320)
+            val rowHeight = if (quick) 68 else 148
             val graphWidth = if (multiGrid) (width - 40) / 2 else width - 32
             hs.forEachIndexed { index, h ->
                 val row =
                     RemoteViews(
                         c.packageName,
-                        if (quick && hs.size == 1 && height >= 156) R.layout.widget_quick_tall
+                        if (quick && hs.size == 1 && height >= 144 && width < 280)
+                            R.layout.widget_quick_tall
                         else if (quick) R.layout.widget_quick_compact
                         else if (collection != null) R.layout.widget_list_row
                         else R.layout.widget_row,
@@ -123,6 +172,34 @@ object Widgets {
                         (height - 24).coerceAtLeast(56).toFloat(),
                         android.util.TypedValue.COMPLEX_UNIT_DIP,
                     )
+                if (quick) {
+                    val icon =
+                        when {
+                            h.name.contains("guitar", true) || h.name.contains("music", true) ->
+                                "🎸"
+                            h.name.contains("read", true) -> "📖"
+                            h.name.contains("run", true) -> "🏃"
+                            h.name.contains("walk", true) -> "🚶"
+                            h.name.contains("gym", true) || h.name.contains("workout", true) -> "💪"
+                            else -> h.name.take(1).uppercase()
+                        }
+                    row.setTextViewText(R.id.activity_icon, icon)
+                    row.setTextColor(R.id.activity_icon, Theme.colors[h.color.coerceIn(0, 9)])
+                    row.setTextColor(
+                        R.id.quick_log,
+                        if (light) 0xff166534.toInt() else 0xff86efac.toInt(),
+                    )
+                    row.setInt(
+                        R.id.row,
+                        "setBackgroundResource",
+                        if (light) R.drawable.widget_tile_light else R.drawable.widget_tile,
+                    )
+                    row.setInt(
+                        R.id.quick_log,
+                        "setBackgroundResource",
+                        if (light) R.drawable.widget_plus_light else R.drawable.widget_plus,
+                    )
+                }
                 row.setTextViewText(R.id.title, h.name)
                 row.setTextViewText(R.id.count, "${h.count(Dates.today())} today")
                 row.setTextColor(R.id.title, fg)
@@ -131,8 +208,23 @@ object Widgets {
                 row.setViewVisibility(R.id.quick_log, if (quick) View.VISIBLE else View.GONE)
                 row.setViewVisibility(R.id.plot, if (quick) View.GONE else View.VISIBLE)
                 row.setViewVisibility(R.id.overlay_log, if (log) View.VISIBLE else View.GONE)
+                row.setContentDescription(R.id.quick_log, "Log ${h.name} for today")
+                row.setContentDescription(R.id.overlay_log, "Log ${h.name} for today")
                 row.setOnClickPendingIntent(R.id.quick_log, click(c, id, h.id, true))
                 row.setOnClickPendingIntent(R.id.overlay_log, click(c, id, h.id, true))
+                if (!quick && hs.size == 1 && android.os.Build.VERSION.SDK_INT >= 31) {
+                    val compact = height < 166
+                    row.setViewVisibility(
+                        R.id.widget_heading,
+                        if (compact) View.GONE else View.VISIBLE,
+                    )
+                    row.setViewLayoutMargin(
+                        R.id.plot,
+                        RemoteViews.MARGIN_TOP,
+                        if (compact) 0f else 8f,
+                        android.util.TypedValue.COMPLEX_UNIT_DIP,
+                    )
+                }
                 if (!quick) {
                     val graph =
                         Theme.graph(
@@ -145,6 +237,7 @@ object Widgets {
                             config.optInt("color", h.color),
                             light,
                             config.optBoolean("gradient", false),
+                            center = true,
                         )
                     row.setImageViewBitmap(R.id.graph, graph)
                     row.setContentDescription(
@@ -154,11 +247,12 @@ object Widgets {
                     row.setOnClickPendingIntent(R.id.graph, click(c, id, h.id, false))
                 }
                 if (collection != null && android.os.Build.VERSION.SDK_INT >= 31) {
-                    row.setViewLayoutHeight(
-                        R.id.plot,
-                        (rowHeight - 32).toFloat(),
-                        android.util.TypedValue.COMPLEX_UNIT_DIP,
-                    )
+                    if (!quick)
+                        row.setViewLayoutHeight(
+                            R.id.plot,
+                            (rowHeight - 32).toFloat(),
+                            android.util.TypedValue.COMPLEX_UNIT_DIP,
+                        )
                     row.setOnClickFillInIntent(
                         R.id.row,
                         Intent().putExtra("habit", h.id).putExtra("log", false),
@@ -188,6 +282,7 @@ object Widgets {
                         c,
                         id,
                         Intent(c, WidgetActionActivity::class.java)
+                            .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
                             .setAction("widget-list:$id")
                             .addFlags(
                                 Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -197,7 +292,7 @@ object Widgets {
                 rv.setPendingIntentTemplate(collectionId, template)
             }
         }
-        m.updateAppWidget(id, rv)
+        return rv
     }
 }
 

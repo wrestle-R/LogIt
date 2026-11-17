@@ -63,6 +63,7 @@ object Theme {
         color: Int = h.color,
         light: Boolean = light(),
         gradient: Boolean = false,
+        center: Boolean = false,
     ): Bitmap {
         val density = Store.context.resources.displayMetrics.density
         val w = width.coerceIn(80, 1600)
@@ -99,7 +100,9 @@ object Theme {
                         Shader.TileMode.CLAMP,
                     )
                 else null
-            val x = i / 7 * (cell + gap)
+            val x =
+                i / 7 * (cell + gap) +
+                    if (center) (w - (visibleWeeks * (cell + gap) - gap)) / 2 else 0f
             val y = i % 7 * (cell + gap)
             canvas.drawRoundRect(x, y, x + cell, y + cell, radius, radius, paint)
         }

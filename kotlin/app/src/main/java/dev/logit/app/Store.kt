@@ -88,34 +88,36 @@ object Store {
     }
 
     fun confirm(op: LogOp) {
+        if (!configured || auth.currentUser?.uid != op.owner) return
         baseHabits = baseHabits.map { h ->
             if (h.id == op.habit && op.id !in h.appliedOps)
                 OfflineLogQueue.delta(h, op.day, op.delta).copy(appliedOps = h.appliedOps + op.id)
             else h
         }
-        save()
+        save(durable = true)
     }
 
-    fun save() {
-        prefs
-            .edit()
-            .putString(
-                key(),
-                JSONArray(
-                        baseHabits.map { h ->
-                            JSONObject()
-                                .put("id", h.id)
-                                .put("name", h.name)
-                                .put("completions", JSONArray(h.completions))
-                                .put("dailyCounts", JSONObject(h.counts))
-                                .put("order", h.order)
-                                .put("color", h.color)
-                                .put("appliedOps", JSONArray(h.appliedOps.toList()))
-                        }
-                    )
-                    .toString(),
-            )
-            .apply()
+    fun save(durable: Boolean = false) {
+        val editor =
+            prefs
+                .edit()
+                .putString(
+                    key(),
+                    JSONArray(
+                            baseHabits.map { h ->
+                                JSONObject()
+                                    .put("id", h.id)
+                                    .put("name", h.name)
+                                    .put("completions", JSONArray(h.completions))
+                                    .put("dailyCounts", JSONObject(h.counts))
+                                    .put("order", h.order)
+                                    .put("color", h.color)
+                                    .put("appliedOps", JSONArray(h.appliedOps.toList()))
+                            }
+                        )
+                        .toString(),
+                )
+        if (durable) check(editor.commit()) { "Local storage unavailable" } else editor.apply()
         Widgets.refresh(context)
         changed?.invoke()
     }
@@ -248,7 +250,13 @@ object Store {
             .addOnFailureListener { done(it.localizedMessage) }
     }
 
-    fun log(id: String, delta: Int, day: String = Dates.today(), done: (String?) -> Unit) {
+    fun log(
+        id: String,
+        delta: Int,
+        day: String = Dates.today(),
+        expectedOwner: String? = null,
+        done: (String?) -> Unit,
+    ) {
         val h =
             habits.find { it.id == id }
                 ?: run {
@@ -263,16 +271,38 @@ object Store {
             done(null)
             return
         }
+        val owner = if (configured) auth.currentUser?.uid else null
+        if (owner == null || (expectedOwner != null && expectedOwner != owner)) {
+            done("Sign in again before logging")
+            return
+        }
+        try {
+            OfflineLogQueue.enqueue(owner, id, day, delta)
+            save()
+            done(null)
+        } catch (e: Exception) {
+            done("Could not save on this device: " + e.localizedMessage)
+        }
+    }
+
+    fun lastLog(): LogOp? = if (signedIn) OfflineLogQueue.lastLog(auth.currentUser!!.uid) else null
+
+    fun undoLast(expectedId: String, done: (String?) -> Unit) {
         if (!signedIn) {
             done("Sign in first")
             return
         }
         try {
-            OfflineLogQueue.enqueue(auth.currentUser!!.uid, id, day, delta)
+            val last = lastLog()
+            check(last != null && last.id == expectedId) { "That log has already been undone" }
+            check(habits.any { it.id == last.habit && it.count(last.day) > 0 }) {
+                "That completion is no longer available"
+            }
+            OfflineLogQueue.undo(auth.currentUser!!.uid, expectedId)
             save()
             done(null)
         } catch (e: Exception) {
-            done("Could not save on this device: " + e.localizedMessage)
+            done(e.localizedMessage ?: "Could not undo this log")
         }
     }
 

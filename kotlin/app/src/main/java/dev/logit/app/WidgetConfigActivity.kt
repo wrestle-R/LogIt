@@ -49,9 +49,7 @@ class WidgetConfigActivity : Activity() {
         root.addView(label("Widget setup", 22f).apply { setTypeface(null, 1) })
         root.addView(label("Choose your activities and make it yours.", 14f, Theme.muted))
         if (!Store.ready || Store.habits.isEmpty()) {
-            root.addView(
-                label("Open LogIt, sign in and add an activity first. Or explore the local demo.")
-            )
+            root.addView(label("Open LogIt, sign in and add an activity first."))
             root.addView(
                 button("Open LogIt") {
                     startActivity(Intent(this, MainActivity::class.java))
@@ -223,21 +221,6 @@ class WidgetConfigActivity : Activity() {
                 }
                 Store.prefs.edit().putString("widget_$id", config.toString()).apply()
                 val manager = AppWidgetManager.getInstance(this)
-                val quick =
-                    manager
-                        .getAppWidgetInfo(id)
-                        ?.provider
-                        ?.shortClassName
-                        ?.endsWith("QuickWidget") == true
-                manager.updateAppWidgetOptions(
-                    id,
-                    Bundle().apply {
-                        putInt(
-                            AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT,
-                            chosen.size * if (quick) 60 else 110,
-                        )
-                    },
-                )
                 Widgets.update(this, manager, id)
                 setResult(RESULT_OK, Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id))
                 finish()
@@ -263,17 +246,23 @@ class ChoiceView(private val a: Activity, private val choices: Array<String>, in
 
     init {
         setTextColor(Theme.text)
-        textSize = 15f
+        textSize = 14f
+        setSingleLine(true)
+        ellipsize = android.text.TextUtils.TruncateAt.END
+        compoundDrawablePadding = a.dp(8)
+        val arrow =
+            a.getDrawable(R.drawable.ic_chevron_down)!!.mutate().apply { setTint(Theme.muted) }
+        setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, arrow, null)
         gravity = android.view.Gravity.CENTER_VERTICAL
         setPadding(a.dp(16), 0, a.dp(16), 0)
         background = Theme.shape(Theme.card, a.dp(12).toFloat())
-        text = "${choices[initial]}   ⌄"
+        text = choices[initial]
         setOnClickListener {
             PrettyDialog.Builder(a)
                 .setTitle("Choose an option")
                 .setSingleChoiceItems(choices, selectedItemPosition) { _, index ->
                     selectedItemPosition = index
-                    text = "${choices[index]}   ⌄"
+                    text = choices[index]
                     onChange?.invoke()
                 }
                 .setNegativeButton("Cancel", null)

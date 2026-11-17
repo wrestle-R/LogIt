@@ -48,7 +48,12 @@ object OfflineLogQueue {
     }
 
     @Synchronized
-    private fun persist(owner: String, ops: List<LogOp>) {
+    private fun persist(
+        owner: String,
+        ops: List<LogOp>,
+        added: LogOp? = null,
+        clearUndo: Boolean = false,
+    ) {
         val a =
             JSONArray(
                 ops.map {
@@ -59,22 +64,60 @@ object OfflineLogQueue {
                         .put("delta", it.delta)
                 }
             )
-        check(Store.prefs.edit().putString("pending_$owner", a.toString()).commit()) {
+        val editor = Store.prefs.edit().putString("pending_$owner", a.toString())
+        if (added != null)
+            editor.putString(
+                "last_log_$owner",
+                JSONObject()
+                    .put("id", added.id)
+                    .put("habit", added.habit)
+                    .put("day", added.day)
+                    .toString(),
+            )
+        if (clearUndo) editor.remove("last_log_$owner")
+        check(editor.commit()) {
             "Local storage unavailable"
         }
     }
 
     @Synchronized
     fun enqueue(owner: String, habit: String, day: String, delta: Int) {
+        val op = LogOp(UUID.randomUUID().toString(), owner, habit, day, delta)
+        val previous = lastLog(owner)
         persist(
             owner,
-            operations(owner) + LogOp(UUID.randomUUID().toString(), owner, habit, day, delta),
+            operations(owner) + op,
+            added = if (delta > 0) op else null,
+            clearUndo = delta < 0 && previous?.habit == habit && previous.day == day,
         )
         schedule()
     }
 
     @Synchronized
+    fun lastLog(owner: String): LogOp? =
+        try {
+            Store.prefs.getString("last_log_$owner", null)?.let { raw ->
+                val o = JSONObject(raw)
+                LogOp(o.getString("id"), owner, o.getString("habit"), o.getString("day"), 1)
+            }
+        } catch (_: Exception) {
+            null
+        }
+
+    /** Compare the persisted log ID so two Undo taps cannot reverse the same event. */
+    @Synchronized
+    fun undo(owner: String, expectedId: String) {
+        val last = lastLog(owner)
+        check(last != null && last.id == expectedId) { "That log has already been undone" }
+        val reversal = LogOp(UUID.randomUUID().toString(), owner, last.habit, last.day, -1)
+        persist(owner, operations(owner) + reversal, clearUndo = true)
+        schedule()
+    }
+
+    @Synchronized
     fun remove(op: LogOp) {
+        // Cache includes appliedOps, so a retry still projects the completion only once.
+        // Commit that cache before forgetting the queued operation.
         Store.confirm(op)
         persist(op.owner, operations(op.owner).filter { it.id != op.id })
         Store.save()
