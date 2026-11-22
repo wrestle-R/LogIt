@@ -1,6 +1,9 @@
-export function GET() {
-  return Response.redirect(
-    "https://github.com/wrestle-R/LogIt/releases/latest/download/logit.apk",
-    307,
-  );
+export function GET(request: Request) {
+  return new Response(null, {
+    status: 307,
+    headers: {
+      Location: new URL("/downloads/logit-0.3.2.apk", request.url).href,
+      "Cache-Control": "no-store",
+    },
+  });
 }

@@ -152,15 +152,12 @@ object Widgets {
             val width = requestedWidth.coerceAtLeast(100)
             val height = requestedHeight.coerceAtLeast(60)
             val weeks = 52
-            val multiGrid = hs.size > 1 && width >= (if (quick) 260 else 320)
-            val graphWidth =
-                if (multiGrid) (width - 40) / 2 else width - if (compactGraph) 16 else 32
-            val columns = if (multiGrid) 2 else 1
-            val cellHeight = if (quick) minOf(76, height - 16) else if (compactGraph) 116 else 156
-            val padding = if (quick || compactGraph) 16 else 24
-            val fullCapacity = maxOf(1, (height - padding) / cellHeight) * columns
-            val showOverflow = fullCapacity < hs.size && height >= cellHeight + padding + 24
-            val capacity = maxOf(1, (height - padding - if (showOverflow) 24 else 0) / cellHeight) * columns
+            val layout = WidgetLayout.fit(width, height, hs.size, quick)
+            val multiGrid = layout.columns == 2
+            val graphWidth = if (multiGrid) (width - 40) / 2 else width - 32
+            val cellHeight = layout.rowHeight
+            val capacity = layout.visible
+            val showOverflow = capacity < hs.size && height >= 108
             val shown = hs.take(capacity)
             rv.setContentDescription(R.id.root, "LogIt, ${shown.size} of ${hs.size} activities. Resize to show more.")
             if (showOverflow) {
@@ -177,13 +174,13 @@ object Widgets {
                 val row =
                     RemoteViews(
                         c.packageName,
-                        if (quick && hs.size == 1 && height >= 132 && width < 280)
+                        if (quick && cellHeight >= 112)
                             R.layout.widget_quick_tall
                         else if (quick) R.layout.widget_quick_compact
                         else if (hs.size > 1) R.layout.widget_list_row
                         else R.layout.widget_row,
                     )
-                if (hs.size > 1 && android.os.Build.VERSION.SDK_INT >= 31)
+                if (android.os.Build.VERSION.SDK_INT >= 31)
                     row.setViewLayoutHeight(R.id.row, cellHeight.toFloat(), android.util.TypedValue.COMPLEX_UNIT_DIP)
                 if (quick && hs.size == 1 && android.os.Build.VERSION.SDK_INT >= 31)
                     row.setViewLayoutHeight(
@@ -277,7 +274,7 @@ object Widgets {
                     row.setImageViewBitmap(R.id.graph, graph)
                     row.setContentDescription(
                         R.id.graph,
-                        "${h.name}: $weeks weeks, ${h.total()} total logs. Open activity.",
+                        "${h.name}: recent history, ${h.total()} total logs. Open activity.",
                     )
                     row.setOnClickPendingIntent(R.id.graph, click(c, id, h.id, false))
                 }

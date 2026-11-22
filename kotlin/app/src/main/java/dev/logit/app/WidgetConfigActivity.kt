@@ -33,17 +33,30 @@ class WidgetConfigActivity : Activity() {
             finish()
             return
         }
+        if (pinKind == null) pinKind = when (AppWidgetManager.getInstance(this).getAppWidgetInfo(id)?.provider?.shortClassName?.substringAfterLast(".")) {
+            "QuickWidget" -> "quick"
+            "GraphWidget" -> "graph"
+            else -> "log"
+        }
         render()
     }
 
     private fun render() {
         val root = column()
-        root.setPadding(dp(18), dp(28), dp(18), dp(18))
+        root.setPadding(dp(20), dp(12), dp(20), dp(24))
+        window.statusBarColor = Theme.bg
+        window.navigationBarColor = Theme.bg
+        window.decorView.systemUiVisibility = if (Theme.light()) android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0
         val sc =
             ScrollView(this).apply {
                 setBackgroundColor(Theme.bg)
                 isFillViewport = true
             }
+        sc.setOnApplyWindowInsetsListener { view, insets ->
+            @Suppress("DEPRECATION")
+            view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            insets
+        }
         sc.addView(root)
         setContentView(sc)
         root.addView(label("Widget setup", 22f).apply { setTypeface(null, 1) })
@@ -64,12 +77,18 @@ class WidgetConfigActivity : Activity() {
         if (existing != null)
             (0 until existing.length()).forEach { selected.add(existing.getString(it)) }
         val boxes = mutableListOf<CheckBox>()
+        var updatePreview: () -> Unit = {}
+        val activityList = column().apply { setPadding(0, 0, 0, dp(8)) }
+        root.addView(activityList)
         Store.habits.forEachIndexed { index, h ->
             val check =
                 CheckBox(this).apply {
                     text = h.name
                     setTextColor(Theme.text)
-                    buttonTintList = android.content.res.ColorStateList.valueOf(Theme.colors[0])
+                    buttonTintList = android.content.res.ColorStateList.valueOf(Theme.text)
+                    minHeight = dp(48)
+                    setPadding(dp(12), dp(4), dp(12), dp(4))
+                    background = Theme.shape(Theme.card, dp(12).toFloat())
                     isChecked = if (existing == null) index == 0 else selected.contains(h.id)
                     setOnCheckedChangeListener { b, checked ->
                         if (checked && boxes.count { it.isChecked } > 4) {
@@ -81,10 +100,11 @@ class WidgetConfigActivity : Activity() {
                                 )
                                 .show()
                         }
+                        updatePreview()
                     }
                 }
             boxes.add(check)
-            root.addView(check)
+            activityList.addView(check, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
         }
         fun select(title: String, options: Array<String>, initial: Int): ChoiceView {
             root.addView(label(title, 13f, Theme.muted))
@@ -122,32 +142,52 @@ class WidgetConfigActivity : Activity() {
                 isChecked = old.optBoolean("gradient")
             }
         root.addView(gradient)
-        val sample =
-            ImageView(this).apply {
-                scaleType = ImageView.ScaleType.CENTER
-                contentDescription = "Sample activity heatmap"
-            }
-        root.addView(sample, LinearLayout.LayoutParams(-1, dp(116)))
+        root.addView(label("Preview", 13f, Theme.muted))
+        val preview = column().apply { setPadding(dp(12), dp(12), dp(12), dp(12)) }
+        root.addView(preview, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4); bottomMargin = dp(16) })
         val refreshPreview = {
-            sample.setBackgroundColor(
-                if (theme.selectedItemPosition == 0) 0xff101012.toInt() else 0xfffafafa.toInt()
-            )
-            sample.post {
-                if (sample.width > 0 && sample.height > 0)
-                    sample.setImageBitmap(
-                        Theme.graph(
-                            Store.habits.first(),
-                            52,
-                            sample.width,
-                            sample.height,
-                            color.selectedItemPosition,
-                            theme.selectedItemPosition == 1,
-                            gradient.isChecked,
-                        )
-                    )
+            val light = theme.selectedItemPosition == 1
+            val foreground = if (light) 0xff18181b.toInt() else 0xfffafafa.toInt()
+            val muted = if (light) 0xff52525b.toInt() else 0xffa1a1aa.toInt()
+            activityList.visibility = if (mode.selectedItemPosition == 0) android.view.View.VISIBLE else android.view.View.GONE
+            pages.visibility = if (mode.selectedItemPosition == 1) android.view.View.VISIBLE else android.view.View.GONE
+            root.getChildAt(root.indexOfChild(pages) - 1).visibility = pages.visibility
+            preview.removeAllViews()
+            preview.background = Theme.shape(if (light) 0xfffafafa.toInt() else 0xff101012.toInt(), dp(20).toFloat())
+            val chosen = if (mode.selectedItemPosition == 1)
+                Store.habits.drop(pages.selectedItemPosition * 4).take(4)
+            else Store.habits.filterIndexed { i, _ -> boxes[i].isChecked }
+            if (chosen.isEmpty()) preview.addView(label("Select an activity to preview", 14f, muted))
+            chosen.forEach { habit ->
+                val heading = LinearLayout(this).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
+                heading.addView(label(habit.name, 15f, foreground).apply { setTypeface(null, 1) }, LinearLayout.LayoutParams(0, -2, 1f))
+                heading.addView(label("${habit.count(Dates.today())} today", 12f, muted))
+                preview.addView(heading)
+                if (pinKind != "quick") {
+                    val graph = ImageView(this).apply {
+                        scaleType = ImageView.ScaleType.CENTER
+                        contentDescription = "${habit.name} widget preview"
+                    }
+                    preview.addView(graph, LinearLayout.LayoutParams(-1, dp(116)))
+                    graph.post {
+                        if (graph.width > 0) graph.setImageBitmap(Theme.graph(habit, 52, graph.width, dp(116), color.selectedItemPosition, light, gradient.isChecked, center = true))
+                    }
+                }
+                if (pinKind != "graph") preview.addView(TextView(this).apply {
+                    text = "+ Log ${habit.name}"
+                    textSize = 13f
+                    gravity = android.view.Gravity.CENTER
+                    setTextColor(if (light) 0xfffafafa.toInt() else 0xff18181b.toInt())
+                    background = Theme.shape(foreground, dp(12).toFloat())
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4); bottomMargin = dp(12) })
             }
             Unit
         }
+        updatePreview = refreshPreview
+        mode.onChange = refreshPreview
+        pages.onChange = refreshPreview
         color.onChange = refreshPreview
         theme.onChange = refreshPreview
         gradient.setOnCheckedChangeListener { _, _ -> refreshPreview() }
