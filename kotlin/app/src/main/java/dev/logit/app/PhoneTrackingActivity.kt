@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.health.connect.HealthConnectManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -167,10 +168,7 @@ class PhoneTrackingActivity : ComponentActivity() {
         root.addCard(card().apply {
             addView(label("Log activities from steps, recorded workouts, or sleep when you open LogIt.", 14f, Theme.muted))
             if (status == HealthConnectClient.SDK_AVAILABLE) {
-                addAction("Manage health access") {
-                    runCatching { startActivity(Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS)) }
-                        .onFailure { toast("Couldn't open Health Connect settings.") }
-                }
+                addAction("Manage health access") { openHealthAccess() }
             } else {
                 addView(label(if (status == HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED) {
                     "Install or update Health Connect to continue."
@@ -240,6 +238,16 @@ class PhoneTrackingActivity : ComponentActivity() {
         }
         if (connected) root.addAction("Check health data now") { refreshHealth(force = true) }
         root.addView(label("LogIt syncs activity completions and sleep summaries to your account. Health records are read on this phone.", 12f, Theme.muted))
+    }
+
+    private fun openHealthAccess() {
+        if (Build.VERSION.SDK_INT >= 34) {
+            val permissions = Intent(HealthConnectManager.ACTION_MANAGE_HEALTH_PERMISSIONS)
+                .putExtra(Intent.EXTRA_PACKAGE_NAME, packageName)
+            if (runCatching { startActivity(permissions) }.isSuccess) return
+        }
+        runCatching { startActivity(Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS)) }
+            .onFailure { toast("Couldn't open Health Connect settings.") }
     }
 
     private fun healthRuleEditor(owner: String, metric: HealthMetric, existing: HealthRule?) {
