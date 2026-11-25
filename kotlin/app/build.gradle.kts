@@ -2,8 +2,8 @@ plugins { id("com.android.application") }
 if (file("google-services.json").exists()) { apply(plugin = "com.google.gms.google-services") }
 android {
  namespace = "dev.logit.app"
- compileSdk = 37
- defaultConfig { applicationId = "com.romeiro.logit"; minSdk = 26; targetSdk = 36; versionCode = 7; versionName = "0.3.2"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+ compileSdk = 36
+ defaultConfig { applicationId = "com.romeiro.logit"; minSdk = 26; targetSdk = 36; versionCode = 8; versionName = "0.3.3"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
 dependencies {

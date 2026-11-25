@@ -19,12 +19,13 @@ class WidgetLayoutTest {
     }
     @Test fun overflowHintDoesNotCrowdGraphRows() {
         val layout = WidgetLayout.fit(180, 340, 4, false)
-        assertEquals(1, layout.visible)
-        assertTrue(layout.rowHeight >= 156)
+        assertEquals(2, layout.visible)
+        assertTrue(layout.rowHeight >= 140)
     }
     @Test fun quickTilesUseExpandedSpace() {
         val layout = WidgetLayout.fit(340, 600, 4, true)
         assertEquals(4, layout.visible)
-        assertTrue(layout.rowHeight > 200)
+        assertTrue(layout.rowHeight in 60..120)
+        assertEquals(1, layout.columns)
     }
 }

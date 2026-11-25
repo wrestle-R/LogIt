@@ -157,12 +157,13 @@ object Widgets {
             val graphWidth = if (multiGrid) (width - 40) / 2 else width - 32
             val cellHeight = layout.rowHeight
             val capacity = layout.visible
-            val showOverflow = capacity < hs.size && height >= 108
+            val usedRows = (capacity + layout.columns - 1) / layout.columns
+            val showOverflow = capacity < hs.size && height - 24 - usedRows * cellHeight >= 24
             val shown = hs.take(capacity)
-            rv.setContentDescription(R.id.root, "LogIt, ${shown.size} of ${hs.size} activities. Resize to show more.")
+            rv.setContentDescription(R.id.root, "${shown.size} of ${hs.size} activities")
             if (showOverflow) {
                 rv.setViewVisibility(R.id.overflow_hint, View.VISIBLE)
-                rv.setTextViewText(R.id.overflow_hint, "+${hs.size - shown.size} activities · resize to show")
+                rv.setTextViewText(R.id.overflow_hint, "+${hs.size - shown.size} more")
                 rv.setTextColor(R.id.overflow_hint, muted)
                 rv.setOnClickPendingIntent(R.id.overflow_hint, click(c, id, null, false))
             }
@@ -219,7 +220,7 @@ object Widgets {
                 row.setOnClickPendingIntent(R.id.quick_log, click(c, id, h.id, false))
                 row.setOnClickPendingIntent(R.id.overlay_log, click(c, id, h.id, true))
                 if (!quick && android.os.Build.VERSION.SDK_INT >= 31) {
-                    val compact = compactGraph
+                    val compact = compactGraph || cellHeight < 140
                     if (compact) row.setViewPadding(R.id.row, 0, 0, 0, 0)
                     row.setViewVisibility(
                         R.id.widget_heading,

@@ -38,13 +38,13 @@ object Theme {
     fun light() = Store.prefs.getString("theme", "dark") == "light"
 
     val bg
-        get() = if (light()) Color.rgb(248, 248, 248) else Color.rgb(9, 9, 11)
+        get() = if (light()) Color.rgb(245, 244, 242) else Color.rgb(16, 16, 16)
 
     val card
-        get() = if (light()) Color.WHITE else Color.rgb(24, 24, 27)
+        get() = if (light()) Color.rgb(252, 251, 249) else Color.rgb(27, 27, 29)
 
     val text
-        get() = if (light()) Color.rgb(24, 24, 27) else Color.rgb(250, 250, 250)
+        get() = if (light()) Color.rgb(24, 24, 27) else Color.rgb(233, 232, 229)
 
     val muted
         get() = if (light()) Color.rgb(82, 82, 91) else Color.rgb(161, 161, 170)
@@ -78,8 +78,9 @@ object Theme {
         val today = LocalDate.parse(Dates.today())
         val accent = colors[color.coerceIn(0, 9)]
         for (i in 0 until visibleWeeks * 7) {
-            val day = today.minusDays((visibleWeeks * 7 - 1 - i).toLong()).toString()
-            val n = h.count(day)
+            val day = today.monday().minusWeeks((visibleWeeks - 1).toLong()).plusDays(i.toLong())
+            if (day > today) continue
+            val n = h.count(day.toString())
             val base = if (light) Color.rgb(228, 228, 231) else Color.rgb(39, 39, 42)
             val f = if (n == 0L) 0f else minOf(1f, .25f + n * .18f)
             paint.color =

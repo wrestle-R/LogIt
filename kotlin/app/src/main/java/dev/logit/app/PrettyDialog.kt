@@ -156,9 +156,10 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
                             gravity = Gravity.CENTER_VERTICAL
                             setPadding(a.dp(12), 0, a.dp(12), 0)
                             if (selected == index) {
-                                setTextColor(Theme.colors[0])
+                                setTextColor(Theme.text)
                                 background = Theme.shape(Theme.bg, 12f)
                             }
+                            isFocusable = true
                             setOnClickListener {
                                 choice?.invoke(d, index)
                                 d.dismiss()

@@ -19,6 +19,7 @@ data class Habit(
     val order: Long = 0,
     val color: Int = 0,
     val appliedOps: Set<String> = emptySet(),
+    val goal: Goal? = null,
 ) {
     fun count(day: String) = maxOf(counts[day] ?: 0, if (completions.contains(day)) 1L else 0L)
 
@@ -26,7 +27,8 @@ data class Habit(
 }
 
 object Dates {
-    fun today(): String = LocalDate.now(ZoneId.of("Asia/Kolkata")).toString()
+    val zone: ZoneId = ZoneId.of("Asia/Kolkata")
+    fun today(): String = LocalDate.now(zone).toString()
 }
 
 class LogItApp : Application() {
@@ -76,6 +78,7 @@ object Store {
             auth.addAuthStateListener {
                 listen()
                 OfflineLogQueue.schedule()
+                GoalReminders.schedule(context)
             }
     }
 
@@ -113,6 +116,7 @@ object Store {
                                     .put("order", h.order)
                                     .put("color", h.color)
                                     .put("appliedOps", JSONArray(h.appliedOps.toList()))
+                                    .put("goal", h.goal?.let { JSONObject(it.fields()) })
                             }
                         )
                         .toString(),
@@ -140,6 +144,7 @@ object Store {
                         (o.optJSONArray("appliedOps") ?: JSONArray()).let { a ->
                             (0 until a.length()).map { a.getString(it) }.toSet()
                         },
+                        o.optJSONObject("goal")?.let { Goal.parse(it.optString("period"), it.optInt("target"), it.optString("since")) },
                     )
                 }
                 .sortedBy { it.order }
@@ -190,28 +195,7 @@ object Store {
                         if (snap != null) {
                             baseHabits =
                                 snap.documents
-                                    .map { d ->
-                                        Habit(
-                                            d.id,
-                                            d.getString("name") ?: "Activity",
-                                            (d.get("completions") as? List<*>)?.filterIsInstance<
-                                                String
-                                            >() ?: emptyList(),
-                                            (d.get("dailyCounts") as? Map<*, *>)
-                                                ?.entries
-                                                ?.mapNotNull { (k, v) ->
-                                                    if (k is String && v is Number) k to v.toLong()
-                                                    else null
-                                                }
-                                                ?.toMap() ?: emptyMap(),
-                                            d.getLong("order") ?: 0,
-                                            (d.getLong("color") ?: 0).toInt(),
-                                            (d.get("logOps") as? Map<*, *>)
-                                                ?.keys
-                                                ?.filterIsInstance<String>()
-                                                ?.toSet() ?: emptySet(),
-                                        )
-                                    }
+                                    .map(::decodeDocument)
                                     .sortedBy { it.order }
                             save()
                         }
@@ -219,11 +203,31 @@ object Store {
         }
     }
 
-    fun add(name: String, done: (String?) -> Unit) {
+    fun fetchHabits(uid: String) = FirebaseFirestore.getInstance().collection("habits")
+        .whereEqualTo("userId", uid).get(com.google.firebase.firestore.Source.SERVER)
+
+    fun decodeDocument(document: com.google.firebase.firestore.DocumentSnapshot): Habit {
+        val dailyCounts = document.get("dailyCounts") as? Map<*, *>
+        val goal = document.get("goal") as? Map<*, *>
+        return Habit(
+            id = document.id,
+            name = document.getString("name") ?: "Activity",
+            completions = (document.get("completions") as? List<*>)?.filterIsInstance<String>().orEmpty(),
+            counts = dailyCounts?.entries?.mapNotNull { (key, value) ->
+                if (key is String && value is Number) key to value.toLong() else null
+            }?.toMap().orEmpty(),
+            order = document.getLong("order") ?: 0,
+            color = (document.getLong("color") ?: 0).toInt(),
+            appliedOps = (document.get("logOps") as? Map<*, *>)?.keys?.filterIsInstance<String>()?.toSet().orEmpty(),
+            goal = Goal.parse(goal?.get("period") as? String, goal?.get("target") as? Number, goal?.get("since") as? String),
+        )
+    }
+
+    fun add(name: String, goal: Goal? = null, done: (String?) -> Unit) {
         if (demo) {
             baseHabits =
                 habits +
-                    Habit(UUID.randomUUID().toString(), name, order = System.currentTimeMillis())
+                    Habit(UUID.randomUUID().toString(), name, order = System.currentTimeMillis(), goal = goal)
             save()
             done(null)
             return
@@ -238,6 +242,7 @@ object Store {
                 mapOf(
                     "userId" to auth.currentUser!!.uid,
                     "name" to name,
+                    "goal" to goal?.fields(),
                     "completions" to emptyList<String>(),
                     "dailyCounts" to emptyMap<String, Long>(),
                     "order" to System.currentTimeMillis(),
@@ -248,6 +253,19 @@ object Store {
             )
             .addOnSuccessListener { done(null) }
             .addOnFailureListener { done(it.localizedMessage) }
+    }
+
+    fun setGoal(id: String, goal: Goal?, done: (String?) -> Unit) {
+        if (demo) {
+            baseHabits = baseHabits.map { if (it.id == id) it.copy(goal = goal) else it }
+            save()
+            done(null)
+        } else if (signedIn) {
+            FirebaseFirestore.getInstance().collection("habits").document(id)
+                .update("goal", goal?.fields())
+                .addOnSuccessListener { done(null) }
+                .addOnFailureListener { done(it.localizedMessage ?: "Could not save the goal") }
+        } else done("Sign in first")
     }
 
     fun log(
@@ -267,6 +285,7 @@ object Store {
             baseHabits = habits.map {
                 if (it.id == id) OfflineLogQueue.delta(it, day, delta) else it
             }
+            if (delta == 1) demoUndo.add(LogOp(UUID.randomUUID().toString(), "demo", id, day, delta))
             save()
             done(null)
             return
@@ -285,10 +304,16 @@ object Store {
         }
     }
 
-    fun lastLog(): LogOp? = if (signedIn) OfflineLogQueue.lastLog(auth.currentUser!!.uid) else null
+    private val demoUndo = mutableListOf<LogOp>()
+
+    fun lastLog(): LogOp? = when {
+        demo -> demoUndo.lastOrNull()
+        signedIn -> OfflineLogQueue.lastLog(auth.currentUser!!.uid)
+        else -> null
+    }
 
     fun undoLast(expectedId: String, done: (String?) -> Unit) {
-        if (!signedIn) {
+        if (!demo && !signedIn) {
             done("Sign in first")
             return
         }
@@ -298,7 +323,12 @@ object Store {
             check(habits.any { it.id == last.habit && it.count(last.day) > 0 }) {
                 "That completion is no longer available"
             }
-            OfflineLogQueue.undo(auth.currentUser!!.uid, expectedId)
+            if (demo) {
+                baseHabits = baseHabits.map {
+                    if (it.id == last.habit) OfflineLogQueue.delta(it, last.day, -1) else it
+                }
+                demoUndo.removeAt(demoUndo.lastIndex)
+            } else OfflineLogQueue.undo(auth.currentUser!!.uid, expectedId)
             save()
             done(null)
         } catch (e: Exception) {

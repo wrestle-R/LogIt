@@ -11,6 +11,7 @@ import com.google.android.gms.common.api.ApiException
 import com.google.firebase.auth.GoogleAuthProvider
 
 class MainActivity : Activity() {
+    private var dashboardScroll: ScrollView? = null
     private var page = 0
     private var focus: String? = null
     private var authBusy = false
@@ -30,6 +31,14 @@ class MainActivity : Activity() {
         Store.listen()
         render()
         routeLog()
+        AppUpdates.refresh(this) { render() }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, results: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, results)
+        if (requestCode == GoalReminders.permissionRequest) {
+            GoalReminders.setEnabled(this, results.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -74,15 +83,22 @@ class MainActivity : Activity() {
                 flags,
             )
         }
-        val root = column()
+        val previousScroll = dashboardScroll?.scrollY ?: 0
+        val root = column().apply { background = null }
         root.setPadding(dp(18), dp(8), dp(18), dp(16))
         val scroll =
             ScrollView(this).apply {
-                setBackgroundColor(Theme.bg)
+                if (Theme.light()) setBackgroundColor(Theme.bg)
+                else {
+                    setBackgroundResource(R.drawable.t3_background)
+                    background.setColorFilter(0x55101010, android.graphics.PorterDuff.Mode.SRC_OVER)
+                }
                 isFillViewport = true
             }
         scroll.addView(root)
+        dashboardScroll = scroll
         setContentView(scroll)
+        scroll.post { scroll.scrollTo(0, previousScroll) }
         scroll.setOnApplyWindowInsetsListener { view, insets ->
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
@@ -129,9 +145,9 @@ class MainActivity : Activity() {
             },
             LinearLayout.LayoutParams(dp(80), dp(48)),
         )
-        if (Store.ready)
-            header.addView(
-                icon("⋯", "More options") { settings() },
+        header.addView(
+                icon(if (AppUpdates.cachedUpdate(this)) "↑" else "⋯",
+                    if (AppUpdates.cachedUpdate(this)) "More options, update available" else "More options") { settings() },
                 LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(8) },
             )
         root.addView(header)
@@ -290,6 +306,9 @@ class MainActivity : Activity() {
                 }
             top.addView(grip, LinearLayout.LayoutParams(dp(36), dp(44)))
             card.addView(top)
+            card.addView(quietAction(h.goalLabel(java.time.LocalDate.parse(Dates.today())) ?: "Set goal") {
+                editActivity(h)
+            }, LinearLayout.LayoutParams(-2, dp(44)))
             card.setOnDragListener { _, event ->
                 when (event.action) {
                     DragEvent.ACTION_DRAG_STARTED -> event.clipDescription?.label == "habit"
@@ -331,7 +350,7 @@ class MainActivity : Activity() {
             )
             val actions = row()
             actions.addView(
-                label("${h.count(Dates.today())} today", 13f, Theme.muted),
+                quietAction("Add for yesterday") { backdate(h) },
                 LinearLayout.LayoutParams(0, -2, 1f),
             )
             actions.addView(
@@ -378,48 +397,19 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun add() {
-        val input =
-            EditText(this).apply {
-                hint = "Activity name"
-                background = Theme.shape(Theme.bg, dp(12).toFloat())
-                setPadding(dp(14), dp(12), dp(14), dp(12))
-                setTextColor(Theme.text)
-                setHintTextColor(Theme.muted)
-                setSingleLine()
-                filters = arrayOf(android.text.InputFilter.LengthFilter(80))
-            }
-        val d =
-            PrettyDialog.Builder(this, dialogTheme())
-                .setTitle("New activity")
-                .setView(input)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Create", null)
-                .create()
-        d.setOnShowListener {
-            d.getButton(-1).setOnClickListener {
-                val name = input.text.toString().trim()
-                if (name.isBlank()) input.error = "Give it a name"
-                else {
-                    d.getButton(-1).isEnabled = false
-                    Store.add(name) { e ->
-                        if (e == null) d.dismiss()
-                        else {
-                            input.error = e
-                            d.getButton(-1).isEnabled = true
-                        }
-                    }
-                }
-            }
-        }
-        d.show()
-    }
+    private fun add() = editActivity()
 
     private fun settings() {
+        val options = if (Store.ready) arrayOf("Check for updates", "View statistics", "Goal reminders", "Add a widget", "Sign out")
+            else arrayOf("Check for updates")
         PrettyDialog.Builder(this, dialogTheme())
             .setTitle("More options")
-            .setItems(arrayOf("Add a widget", "Sign out")) { _, n ->
-                if (n == 0) {
+            .setItems(options) { _, n ->
+                when (n) {
+                0 -> AppUpdates.show(this)
+                1 -> showStatistics()
+                2 -> GoalReminders.settings(this)
+                3 -> {
                     PrettyDialog.Builder(this)
                         .setTitle("Add a widget")
                         .setItems(arrayOf("Quick log", "Heatmap", "Heatmap + log")) { _, kind ->
@@ -430,9 +420,12 @@ class MainActivity : Activity() {
                         }
                         .setNegativeButton("Cancel", null)
                         .show()
-                } else {
+                }
+                4 -> {
                     if (Store.demo) Store.leaveDemo() else Store.auth.signOut()
+                    GoalReminders.schedule(this)
                     render()
+                }
                 }
             }
             .setNegativeButton("Close", null)
@@ -487,6 +480,7 @@ class MainActivity : Activity() {
     @Deprecated("Legacy Google sign-in result")
     override fun onActivityResult(request: Int, result: Int, data: Intent?) {
         super.onActivityResult(request, result, data)
+        if (request == 92) AppUpdates.resumeInstall(this)
         if (request == 42) {
             android.util.Log.i("LogItAuth", "Account chooser returned result=$result")
             try {
