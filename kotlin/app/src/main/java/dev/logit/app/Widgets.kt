@@ -31,6 +31,7 @@ class LogGraphWidget : BaseWidget()
 
 object Widgets {
     fun refresh(c: Context) {
+        SleepWidget.refresh(c)
         val m = AppWidgetManager.getInstance(c)
         listOf(QuickWidget::class.java, GraphWidget::class.java, LogGraphWidget::class.java)
             .forEach { cls ->

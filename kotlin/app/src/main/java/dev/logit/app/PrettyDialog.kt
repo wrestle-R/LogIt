@@ -124,7 +124,7 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
         actions.addView(
             button,
             LinearLayout.LayoutParams(0, owner.dp(44), 1f).apply {
-                if (actions.childCount > 1) marginStart = owner.dp(10)
+                if (actions.childCount > 0) marginStart = owner.dp(10)
             },
         )
     }

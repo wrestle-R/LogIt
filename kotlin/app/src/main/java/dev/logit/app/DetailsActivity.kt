@@ -96,11 +96,12 @@ class DetailsActivity : Activity() {
 
     private fun widgetTypes(root: LinearLayout) {
         root.addView(label("Pick a layout to configure and add to your home screen.", 14f, Theme.muted))
+        val sleepAvailable = Store.trackingOwner()?.let(PhoneTracking::sleep) != null
         val items = listOf(
             Triple("Quick log", "Compact activity tiles for instant one-tap daily logging.", "quick"),
             Triple("Heatmap", "Recent weeks completion grid at a glance.", "graph"),
             Triple("Heatmap + log", "Completion grid with an overlaid + Log button.", "log"),
-        )
+        ) + if (sleepAvailable) listOf(Triple("Sleep", "Your latest sleep estimate and weekly history.", "sleep")) else emptyList()
         items.forEachIndexed { index, (name, subtitle, kind) ->
             val card = panel().apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -121,8 +122,14 @@ class DetailsActivity : Activity() {
                 addView(textCol, LinearLayout.LayoutParams(0, -2, 1f))
                 addView(label("›", 20f, Theme.muted).apply { setPadding(dp(12), 0, 0, 0) })
                 setOnClickListener {
-                    startActivity(Intent(this@DetailsActivity, WidgetConfigActivity::class.java).putExtra("pinKind", kind))
-                    finish()
+                    if (kind == "sleep") {
+                        if (!SleepWidget.pin(this@DetailsActivity)) {
+                            Toast.makeText(this@DetailsActivity, "This launcher couldn't add the Sleep widget.", Toast.LENGTH_LONG).show()
+                        }
+                    } else {
+                        startActivity(Intent(this@DetailsActivity, WidgetConfigActivity::class.java).putExtra("pinKind", kind))
+                        finish()
+                    }
                 }
             }
             root.addView(card, LinearLayout.LayoutParams(-1, -2).apply {

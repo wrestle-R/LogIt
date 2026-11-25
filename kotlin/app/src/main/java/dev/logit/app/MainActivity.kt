@@ -31,7 +31,19 @@ class MainActivity : Activity() {
         Store.listen()
         render()
         routeLog()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        PhoneTracking.schedule()
+        PhoneTracking.syncSleep()
         AppUpdates.refresh(this) { render() }
+        render()
+    }
+
+    override fun onPause() {
+        AppUpdates.pause(this)
+        super.onPause()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, results: IntArray) {
@@ -86,8 +98,7 @@ class MainActivity : Activity() {
         root.setPadding(dp(18), dp(8), dp(18), dp(16))
         val scroll =
             ScrollView(this).apply {
-                if (Theme.light()) setBackgroundColor(Theme.bg)
-                else background = Theme.dashboardBackground()
+                background = Theme.dashboardBackground()
                 isFillViewport = true
             }
         scroll.addView(root)
@@ -142,12 +153,11 @@ class MainActivity : Activity() {
             },
             LinearLayout.LayoutParams(dp(80), dp(48)),
         )
-        val updateAvailable = AppUpdates.cachedUpdate(this)
-        val more = icon(if (updateAvailable) "↑" else "⋯",
-            if (updateAvailable) "More options, update available" else "More options", bordered = true) {}
+        val more = icon("⋯", "More options", bordered = true) {}
         more.setOnClickListener { settings(more) }
         header.addView(more, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(8) })
         root.addView(header)
+        AppUpdates.availableVersion(this)?.let { version -> addUpdateBanner(root, version) }
         if (!Store.ready) {
             root.addView(loginView(authBusy, authError) { signIn() })
             return
@@ -399,6 +409,27 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun addUpdateBanner(root: LinearLayout, version: String) {
+        val banner = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = Theme.bordered(Theme.card, Theme.controlBorder, dp(12).toFloat(), dp(1))
+            setPadding(dp(12), dp(6), dp(6), dp(6))
+        }
+        banner.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(label("Update available", 14f).apply { setTypeface(null, Typeface.BOLD) })
+            addView(label("LogIt $version", 12f, Theme.muted))
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        banner.addView(button("Update") { AppUpdates.update(this) }.apply {
+            background = Theme.shape(Theme.text, dp(8).toFloat())
+            minimumWidth = 0
+            minWidth = 0
+            stateListAnimator = null
+            setPadding(dp(12), 0, dp(12), 0)
+        }, LinearLayout.LayoutParams(-2, dp(44)))
+        root.addView(banner, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+    }
+
     private fun activityOptions(habit: Habit) {
         val colorIdx = habit.color.coerceIn(0, Theme.colors.lastIndex)
         val goalSummary = habit.goal?.let {
@@ -406,7 +437,7 @@ class MainActivity : Activity() {
         } ?: "No goal set"
         lateinit var dialog: PrettyDialog
 
-        fun optionCard(title: String, subtitle: String, swatchColor: Int? = null, action: () -> Unit) =
+        fun optionCard(title: String, subtitle: String, swatchColor: Int? = null, destructive: Boolean = false, action: () -> Unit) =
             LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -418,7 +449,7 @@ class MainActivity : Activity() {
                 contentDescription = "$title, $subtitle"
                 val textCol = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.VERTICAL
-                    addView(label(title, 15f, Theme.text).apply {
+                    addView(label(title, 15f, if (destructive) Theme.destructive else Theme.text).apply {
                         setTypeface(null, Typeface.BOLD)
                         setPadding(0, 0, 0, 0)
                     })
@@ -443,7 +474,7 @@ class MainActivity : Activity() {
             }
 
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        list.addView(optionCard("Edit goal", goalSummary) { editActivity(habit) })
+        list.addView(optionCard("Rename & edit", goalSummary) { editActivity(habit) })
         list.addView(
             optionCard("Activity colour", Theme.names[colorIdx], Theme.colors[colorIdx]) {
                 activityColourPicker(habit)
@@ -451,11 +482,48 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) },
         )
 
+        if (Store.trackingOwner()?.let(PhoneTracking::sleep)?.activityId == habit.id) {
+            list.addView(optionCard("Sleep history", "Review and edit your estimates") {
+                openTracking("sleep")
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        }
+        list.addView(optionCard("Delete activity", "Permanently removes its history", destructive = true) {
+            confirmDelete(habit)
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+
         dialog = PrettyDialog.Builder(this)
             .setTitle(habit.name)
             .setView(list)
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun confirmDelete(habit: Habit) {
+        val owner = Store.trackingOwner() ?: return
+        val dialog = PrettyDialog.Builder(this)
+            .setTitle("Delete ${habit.name}?")
+            .setMessage("This permanently deletes the activity and its log history across your account.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Delete activity", null)
+            .create()
+        dialog.setOnShowListener {
+            val confirm = dialog.getButton(-1)
+            confirm.background = Theme.shape(Theme.destructive, dp(10).toFloat())
+            confirm.setTextColor(if (Theme.light()) 0xffffffff.toInt() else 0xff18181b.toInt())
+            confirm.setOnClickListener {
+                confirm.isEnabled = false
+                Store.delete(habit.id) { problem ->
+                    if (problem == null) {
+                        PhoneTracking.removeActivity(owner, habit.id)
+                        dialog.dismiss()
+                    } else {
+                        confirm.isEnabled = true
+                        toast(problem)
+                    }
+                }
+            }
+        }
+        dialog.show()
     }
 
     private fun activityColourPicker(habit: Habit) {
@@ -629,7 +697,10 @@ class MainActivity : Activity() {
     @Deprecated("Legacy Google sign-in result")
     override fun onActivityResult(request: Int, result: Int, data: Intent?) {
         super.onActivityResult(request, result, data)
-        if (request == 92) AppUpdates.resumeInstall(this)
+        when (request) {
+            AppUpdates.INSTALL_PERMISSION_REQUEST -> AppUpdates.resumeInstall(this)
+            AppUpdates.INSTALL_PACKAGE_REQUEST -> AppUpdates.installFinished(this, result)
+        }
         if (request == 42) {
             android.util.Log.i("LogItAuth", "Account chooser returned result=$result")
             try {

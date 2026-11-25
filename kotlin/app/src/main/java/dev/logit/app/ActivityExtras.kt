@@ -59,11 +59,9 @@ fun MainActivity.editActivity(habit: Habit? = null) {
         contentDescription = "Activity name"
     }
     val nameError = inlineErrorLabel()
-    if (habit == null) {
-        fields.addView(fieldLabel("Activity name"))
-        fields.addView(name, LinearLayout.LayoutParams(-1, -2))
-        fields.addView(nameError)
-    }
+    fields.addView(fieldLabel("Activity name"))
+    fields.addView(name, LinearLayout.LayoutParams(-1, -2))
+    fields.addView(nameError)
 
     val periods = arrayOf("No goal", "Every day", "Every week")
     val values = listOf("none", "daily", "weekly")
@@ -183,11 +181,50 @@ fun MainActivity.editActivity(habit: Habit? = null) {
     fields.addView(amountError)
     refreshSegments()
 
-    val dialog = PrettyDialog.Builder(this)
-        .setTitle(if (habit == null) "New activity" else "Goal for ${habit.name}")
+    lateinit var dialog: PrettyDialog
+    if (habit == null) {
+        fields.addView(fieldLabel("Templates & tracking", topDp = 16))
+        val shortcuts = LinearLayout(this)
+        val routes = listOf(
+            Triple("Sleep", "sleep", R.drawable.ic_sleep),
+            Triple("App use", "apps", R.drawable.ic_app_use),
+            Triple("Screen time", "limits", R.drawable.ic_screen_time),
+        )
+        for ((title, route, icon) in routes) {
+            val shortcut = quietAction(title) {
+                dialog.dismiss()
+                openTracking(route)
+            }.apply {
+                setTextColor(Theme.text)
+                gravity = Gravity.CENTER
+                setPadding(dp(4), dp(9), dp(4), dp(8))
+                minHeight = dp(60)
+                minimumHeight = dp(60)
+                minLines = 1
+                maxLines = 2
+                background = RippleDrawable(
+                    ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
+                    Theme.shape(Theme.track, dp(9).toFloat()),
+                    null,
+                )
+                val glyph = getDrawable(icon)?.mutate()?.apply {
+                    setTint(Theme.muted)
+                    setBounds(0, 0, dp(18), dp(18))
+                }
+                compoundDrawablePadding = dp(5)
+                setCompoundDrawablesRelative(null, glyph, null, null)
+            }
+            shortcuts.addView(shortcut, LinearLayout.LayoutParams(0, -1, 1f).apply {
+                if (shortcuts.childCount > 0) marginStart = dp(6)
+            })
+        }
+        fields.addView(shortcuts, LinearLayout.LayoutParams(-1, -2))
+    }
+    dialog = PrettyDialog.Builder(this)
+        .setTitle(if (habit == null) "New activity" else "Edit activity")
         .setView(fields)
         .setNegativeButton("Cancel", null)
-        .setPositiveButton(if (habit == null) "Add activity" else "Save goal", null)
+        .setPositiveButton(if (habit == null) "Add activity" else "Save changes", null)
         .create()
 
     fun submit() {
@@ -212,6 +249,7 @@ fun MainActivity.editActivity(habit: Habit? = null) {
         else if (existing?.period == values[selected] && existing.target == target) existing
         else Goal(values[selected], target!!, Dates.today())
         val save = dialog.getButton(-1)
+        if (!save.isEnabled) return
         save.isEnabled = false
         val done: (String?) -> Unit = { problem ->
             if (problem == null) {
@@ -222,7 +260,7 @@ fun MainActivity.editActivity(habit: Habit? = null) {
                 Toast.makeText(this, problem, Toast.LENGTH_LONG).show()
             }
         }
-        if (habit == null) Store.add(title, goal, done) else Store.setGoal(habit.id, goal, done)
+        if (habit == null) Store.add(title, goal, done) else Store.edit(habit.id, title, goal, done)
     }
 
     name.setOnEditorActionListener { _, actionId, _ ->
