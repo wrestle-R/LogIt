@@ -3,6 +3,7 @@ package dev.logit.app
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.graphics.*
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
@@ -71,8 +72,18 @@ object Theme {
         BitmapFactory.decodeResource(Store.context.resources, R.drawable.t3_background)
     }
 
-    fun dashboardBackground() = android.graphics.drawable.BitmapDrawable(Store.context.resources, texture).apply {
-        setTileModeXY(Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+    fun dashboardBackground() = BitmapDrawable(Store.context.resources, texture).apply {
+        setTileModeXY(Shader.TileMode.MIRROR, Shader.TileMode.MIRROR)
+        isFilterBitmap = true
+        if (light()) {
+            // Use the charcoal texture's grain to shade a warm paper surface.
+            colorFilter = ColorMatrixColorFilter(floatArrayOf(
+                -.8f, 0f, 0f, 0f, 254f,
+                0f, -.8f, 0f, 0f, 253f,
+                0f, 0f, -.8f, 0f, 251f,
+                0f, 0f, 0f, 1f, 0f,
+            ))
+        }
     }
 
     fun shape(color: Int, radius: Float = 22f) =
