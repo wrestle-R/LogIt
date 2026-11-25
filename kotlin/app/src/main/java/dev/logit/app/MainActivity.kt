@@ -24,8 +24,6 @@ class MainActivity : Activity() {
             view.view.animate().alpha(0f).setDuration(220).withEndAction { view.remove() }.start()
         }
         focus = intent.getStringExtra("habit")
-        window.statusBarColor = Theme.bg
-        window.navigationBarColor = Theme.bg
         Store.changed = { runOnUiThread { render() } }
         Store.error = { message -> runOnUiThread { toast(message) } }
         Store.listen()
@@ -74,6 +72,8 @@ class MainActivity : Activity() {
         else android.R.style.Theme_Material_Dialog_Alert
 
     fun render() {
+        window.statusBarColor = Theme.bg
+        window.navigationBarColor = Theme.bg
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             val flags =
                 android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
@@ -89,10 +89,7 @@ class MainActivity : Activity() {
         val scroll =
             ScrollView(this).apply {
                 if (Theme.light()) setBackgroundColor(Theme.bg)
-                else {
-                    setBackgroundResource(R.drawable.t3_background)
-                    background.setColorFilter(0x55101010, android.graphics.PorterDuff.Mode.SRC_OVER)
-                }
+                else background = Theme.dashboardBackground()
                 isFillViewport = true
             }
         scroll.addView(root)
@@ -156,14 +153,14 @@ class MainActivity : Activity() {
             return
         }
         val section = row()
-        section.setPadding(0, dp(14), 0, dp(10))
+        section.setPadding(0, dp(10), 0, dp(8))
         val heading =
             LinearLayout(this).apply {
                 orientation = 1
                 addView(label("Your activities", 22f).apply { setTypeface(null, 1) })
                 addView(
                     label(
-                        java.time.LocalDate.now()
+                        java.time.LocalDate.parse(Dates.today())
                             .format(java.time.format.DateTimeFormatter.ofPattern("EEE, d MMM")) +
                             " · ${Store.habits.size} ${if(Store.habits.size==1)"activity"else"activities"}",
                         12f,
@@ -183,7 +180,7 @@ class MainActivity : Activity() {
         )
         root.addView(section)
         val last = Store.lastLog()
-        val tools = row().apply { setPadding(0, 0, 0, dp(12)) }
+        val tools = row().apply { setPadding(0, 0, 0, dp(8)) }
         val periods = intArrayOf(4, 8, 16, 19, 26, 52)
         val historyWeeks = Store.prefs.getInt("historyWeeksV2", 19)
         tools.addView(
@@ -250,13 +247,13 @@ class MainActivity : Activity() {
                 LinearLayout(this).apply {
                     orientation = 1
                     background =
-                        Theme.shape(Theme.card, dp(14).toFloat()).apply {
+                        Theme.shape(Theme.card, dp(12).toFloat()).apply {
                             setStroke(
                                 dp(1),
-                                if (Theme.light()) 0xffe4e4e7.toInt() else 0xff27272a.toInt(),
+                                if (Theme.light()) 0xffe4e4e7.toInt() else 0xff2e2e32.toInt(),
                             )
                         }
-                    setPadding(dp(17), dp(14), dp(17), dp(16))
+                    setPadding(dp(14), dp(12), dp(14), dp(12))
                     tag = h.id
                 }
             val top = row()
@@ -306,9 +303,14 @@ class MainActivity : Activity() {
                 }
             top.addView(grip, LinearLayout.LayoutParams(dp(36), dp(44)))
             card.addView(top)
-            card.addView(quietAction(h.goalLabel(java.time.LocalDate.parse(Dates.today())) ?: "Set goal") {
-                editActivity(h)
-            }, LinearLayout.LayoutParams(-2, dp(44)))
+            val goalLabel = h.goalLabel(java.time.LocalDate.parse(Dates.today()))
+            titles.addView(quietAction(goalLabel ?: "Set goal") { editActivity(h) }.apply {
+                gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                setPadding(0, 0, dp(8), 0)
+                minHeight = 0
+                minimumHeight = 0
+                contentDescription = if (goalLabel == null) "Set goal for ${h.name}" else "$goalLabel. Edit goal for ${h.name}"
+            }, LinearLayout.LayoutParams(-2, dp(36)))
             card.setOnDragListener { _, event ->
                 when (event.action) {
                     DragEvent.ACTION_DRAG_STARTED -> event.clipDescription?.label == "habit"
@@ -344,13 +346,18 @@ class MainActivity : Activity() {
             card.addView(
                 plot,
                 LinearLayout.LayoutParams(-1, dp(116)).apply {
-                    topMargin = dp(14)
-                    bottomMargin = dp(12)
+                    topMargin = dp(4)
+                    bottomMargin = dp(8)
                 },
             )
             val actions = row()
             actions.addView(
-                quietAction("Add for yesterday") { backdate(h) },
+                quietAction("Add for yesterday") { backdate(h) }.apply {
+                    gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                    setPadding(0, 0, dp(8), 0)
+                    textSize = 12f
+                    contentDescription = "Add ${h.name} for yesterday"
+                },
                 LinearLayout.LayoutParams(0, -2, 1f),
             )
             actions.addView(
@@ -367,7 +374,7 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(-2, dp(44)),
             )
             card.addView(actions)
-            root.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+            root.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         }
         if (Store.habits.size > 4) {
             val nav = row()
@@ -376,7 +383,7 @@ class MainActivity : Activity() {
                         page--
                         render()
                     }
-                    .apply { isEnabled = page > 0 },
+                    .apply { isEnabled = page > 0; contentDescription = "Previous activity page" },
                 LinearLayout.LayoutParams(dp(48), dp(44)),
             )
             nav.addView(
@@ -390,7 +397,7 @@ class MainActivity : Activity() {
                         page++
                         render()
                     }
-                    .apply { isEnabled = (page + 1) * 4 < Store.habits.size },
+                    .apply { isEnabled = (page + 1) * 4 < Store.habits.size; contentDescription = "Next activity page" },
                 LinearLayout.LayoutParams(dp(48), dp(44)),
             )
             root.addView(nav)

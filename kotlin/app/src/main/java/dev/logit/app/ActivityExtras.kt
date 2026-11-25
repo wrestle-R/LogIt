@@ -11,7 +11,10 @@ import java.time.format.DateTimeFormatter
 import java.util.Calendar
 
 fun Activity.quietAction(text: String, action: () -> Unit) = button(text, action).apply {
-    background = Theme.shape(Theme.card, dp(8).toFloat())
+    background = android.graphics.drawable.RippleDrawable(
+        android.content.res.ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
+        null, Theme.shape(android.graphics.Color.WHITE, dp(8).toFloat()),
+    )
     setTextColor(Theme.muted)
     textSize = 13f
     minimumWidth = 0
@@ -30,7 +33,7 @@ fun MainActivity.editActivity(habit: Habit? = null) {
         background = Theme.shape(Theme.bg, dp(10).toFloat())
         setPadding(dp(12), dp(10), dp(12), dp(10))
     }
-    val fields = column()
+    val fields = column().apply { background = null; setPadding(0, 0, 0, 0) }
     val name = input("Activity name", habit?.name.orEmpty(), InputType.TYPE_CLASS_TEXT)
     name.filters = arrayOf(android.text.InputFilter.LengthFilter(80))
     if (habit == null) fields.addView(name)
@@ -93,6 +96,8 @@ fun Activity.backdate(habit: Habit) {
     fun refresh() { date.text = day.format(DateTimeFormatter.ofPattern("EEE, d MMM yyyy")) }
     refresh()
     val fields = column().apply {
+        background = null
+        setPadding(0, 0, 0, 0)
         addView(date)
         addView(quietAction("Choose date") {
             val style = if (Theme.light()) android.R.style.Theme_Material_Light_Dialog_Alert else android.R.style.Theme_Material_Dialog_Alert
@@ -105,7 +110,10 @@ fun Activity.backdate(habit: Habit) {
                 set(today.year, today.monthValue - 1, today.dayOfMonth)
             }.timeInMillis
             picker.show()
-        })
+        }.apply {
+            gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, 0, dp(12), 0)
+        }, LinearLayout.LayoutParams(-2, dp(48)))
     }
     PrettyDialog.Builder(this).setTitle("Log ${habit.name}?").setView(fields)
         .setNegativeButton("Cancel", null)
@@ -116,9 +124,11 @@ fun Activity.backdate(habit: Habit) {
         }.show()
 }
 
+private fun statCount(value: Long, noun: String) = "$value $noun${if (value == 1L) "" else "s"}"
+
 fun Activity.showStatistics() {
     val today = LocalDate.parse(Dates.today())
-    val list = column()
+    val list = column().apply { background = null; setPadding(0, 0, 0, 0) }
     if (Store.habits.isEmpty()) list.addView(label("Log an activity to start seeing progress here.", 14f, Theme.muted))
     for (habit in Store.habits) {
         val days = (habit.completions.toSet() + habit.counts.keys)
@@ -127,7 +137,7 @@ fun Activity.showStatistics() {
         list.addView(label(habit.name, 16f).apply { setTypeface(null, Typeface.BOLD) })
         list.addView(label(
             if (days.isEmpty()) "Your first log will show up here."
-            else "${last28.sum()} logs across ${last28.count { it > 0 }} days · ${days.size} active days overall",
+            else "${statCount(last28.sum(), "log")} across ${statCount(last28.count { it > 0 }.toLong(), "day")} · ${statCount(days.size.toLong(), "active day")} overall",
             13f, Theme.muted,
         ))
         if (days.isNotEmpty()) {
@@ -140,12 +150,17 @@ fun Activity.showStatistics() {
                 val bar = column().apply {
                     addView(label(value.toString(), 12f, Theme.muted).apply { gravity = android.view.Gravity.CENTER })
                     addView(View(this@showStatistics).apply {
-                        background = Theme.shape(Theme.colors[habit.color.coerceIn(0, 9)], dp(4).toFloat())
+                        background = Theme.shape(if (value == 0L) Theme.muted else Theme.colors[habit.color.coerceIn(0, 9)], dp(4).toFloat())
                     }, LinearLayout.LayoutParams(-1, dp(maxOf(2, (48 * value / values.max().coerceAtLeast(1)).toInt()))))
                 }
                 chart.addView(bar, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
             }
             list.addView(chart)
+            val formatter = DateTimeFormatter.ofPattern("d MMM")
+            list.addView(LinearLayout(this).apply {
+                addView(label(today.minusDays(27).format(formatter), 11f, Theme.muted), LinearLayout.LayoutParams(0, -2, 1f))
+                addView(label(today.format(formatter), 11f, Theme.muted))
+            })
         }
         list.addView(Space(this), LinearLayout.LayoutParams(1, dp(12)))
     }

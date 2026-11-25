@@ -60,15 +60,11 @@ object GoalReminders {
         if (!enabled()) return
         val manager = context.getSystemService(NotificationManager::class.java)
         if (!manager.areNotificationsEnabled()) return
-        val missed = now.hour in 9..11
-        if (!missed && now.hour < 20) return
-        val today = now.toLocalDate()
-        val day = if (missed) today.minusDays(1) else today
+        val (day, missed) = reminderDate(now) ?: return
         manager.createNotificationChannel(NotificationChannel(channel, "Goal reminders", NotificationManager.IMPORTANCE_DEFAULT))
         for (habit in habits) {
             val goal = habit.goal ?: continue
-            if (goal.period == "weekly" && day.dayOfWeek.value != 7) continue
-            if (goal.since > day.toString() || habit.goalCount(day) >= goal.target) continue
+            if (!habit.needsReminder(day)) continue
             val tag = "$owner:${habit.id}:$day:$missed"
             val ledger = "reminder-delivery:$owner:${habit.id}:$missed"
             if (Store.prefs.getString(ledger, null) == day.toString()) continue
@@ -89,7 +85,7 @@ object GoalReminders {
 class GoalReminderWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
     override fun doWork(): Result {
         if (!GoalReminders.enabled()) return Result.success()
-        if (ZonedDateTime.now(Dates.zone).hour !in (9..11) + (20..23)) return Result.success()
+        if (reminderDate(ZonedDateTime.now(Dates.zone)) == null) return Result.success()
         if (Store.signedIn && !Store.demo) {
             // Refresh cross-device logs before deciding a goal was missed.
             val user = Store.auth.currentUser?.uid ?: return Result.success()

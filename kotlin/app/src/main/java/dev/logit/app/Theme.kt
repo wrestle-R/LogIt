@@ -41,13 +41,21 @@ object Theme {
         get() = if (light()) Color.rgb(245, 244, 242) else Color.rgb(16, 16, 16)
 
     val card
-        get() = if (light()) Color.rgb(252, 251, 249) else Color.rgb(27, 27, 29)
+        get() = if (light()) Color.rgb(252, 251, 249) else Color.rgb(31, 31, 34)
 
     val text
         get() = if (light()) Color.rgb(24, 24, 27) else Color.rgb(233, 232, 229)
 
     val muted
         get() = if (light()) Color.rgb(82, 82, 91) else Color.rgb(161, 161, 170)
+
+    private val texture by lazy {
+        BitmapFactory.decodeResource(Store.context.resources, R.drawable.t3_background)
+    }
+
+    fun dashboardBackground() = android.graphics.drawable.BitmapDrawable(Store.context.resources, texture).apply {
+        setTileModeXY(Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+    }
 
     fun shape(color: Int, radius: Float = 22f) =
         GradientDrawable().apply {

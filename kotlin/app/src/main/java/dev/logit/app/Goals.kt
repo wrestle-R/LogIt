@@ -26,3 +26,15 @@ fun Habit.goalCount(day: LocalDate): Long {
 fun Habit.goalLabel(day: LocalDate): String? = goal?.let {
     "${goalCount(day)} of ${it.target} ${if (it.period == "weekly") "this week" else "today"}"
 }
+
+internal fun reminderDate(now: java.time.ZonedDateTime): Pair<LocalDate, Boolean>? = when (now.hour) {
+    in 9..11 -> now.toLocalDate().minusDays(1) to true
+    in 20..23 -> now.toLocalDate() to false
+    else -> null
+}
+
+internal fun Habit.needsReminder(day: LocalDate): Boolean {
+    val active = goal ?: return false
+    if (active.period == "weekly" && day.dayOfWeek != DayOfWeek.SUNDAY) return false
+    return active.since <= day.toString() && goalCount(day) < active.target
+}

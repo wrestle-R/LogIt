@@ -235,6 +235,12 @@ object Widgets {
                 }
                 if (!quick) {
                     if (android.os.Build.VERSION.SDK_INT >= 31) {
+                        if (multiGrid && log) {
+                            val dip = android.util.TypedValue.COMPLEX_UNIT_DIP
+                            row.setViewLayoutWidth(R.id.overlay_log, 82f, dip)
+                            row.setViewLayoutHeight(R.id.overlay_log, 44f, dip)
+                            row.setTextViewTextSize(R.id.overlay_log, android.util.TypedValue.COMPLEX_UNIT_SP, 14f)
+                        }
                         val cols = minOf(weeks, maxOf(1, (graphWidth + 3) / 17))
                         val inset = ((graphWidth - (cols * 17 - 3)) / 2f).coerceAtLeast(0f)
                         val px = (minOf(inset, 8f) * c.resources.displayMetrics.density).toInt()

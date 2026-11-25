@@ -106,7 +106,7 @@ object AppUpdates {
             val result = runCatching {
                 val directory = File(activity.cacheDir, "updates").apply { mkdirs() }
                 val file = File(directory, "logit.apk")
-                val partial = File(directory, "download.part")
+                val partial = File(directory, "download.part.apk")
                 try {
                     val connection = connection(release.url)
                     val digest = MessageDigest.getInstance("SHA-256")
