@@ -474,3 +474,23 @@ h3 {
 .logit-bars > div > div { border-radius: .25rem; margin-top: .25rem; }
 .activities footer .toolbar { flex-wrap: wrap; }
 .logit-chart-range { display: flex; justify-content: space-between; margin-top: .4rem; }
+
+.stats-page { padding-block: 1.25rem 3rem; }
+.stats-page .stats-heading { display: block; margin: 1.2rem 0; padding: 0; border: 0; }
+.stats-heading h1 { font-size: clamp(1.75rem, 5vw, 2.5rem); font-weight: 620; letter-spacing: -.045em; }
+.stats-heading p, .stats-chart p, .stats-activity p { color: var(--muted-foreground); font-size: .85rem; }
+.stats-filters { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; margin-bottom: .9rem; }
+.stats-segments { display: flex; gap: .2rem; padding: .2rem; background: var(--card); border: 1px solid var(--border); border-radius: .65rem; }
+.stats-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: .55rem; margin-bottom: .9rem; }
+.stats-metrics > div, .stats-chart { background: var(--card); border: 1px solid var(--border); border-radius: .85rem; padding: clamp(.65rem, 3vw, 1.1rem); }
+.stats-metrics strong { display: block; font-size: clamp(1.1rem, 4vw, 1.6rem); font-weight: 620; font-variant-numeric: tabular-nums; }
+.stats-metrics span, .stats-metrics small, .stats-activity small { color: var(--muted-foreground); font-size: .75rem; font-weight: normal; }
+.stats-chart h2, .stats-breakdown h2 { font-size: 1rem; font-weight: 600; }
+.stats-columns { display: grid; align-items: end; gap: clamp(.18rem, 1vw, .55rem); min-height: 148px; padding-bottom: .35rem; border-bottom: 1px solid var(--border); }
+.stats-columns > div { text-align: center; font-size: .7rem; font-variant-numeric: tabular-nums; }
+.stats-columns i { display: block; border-radius: .35rem .35rem 0 0; margin-top: .25rem; }
+.stats-chart .stats-empty { padding-block: 1.5rem; }
+.stats-breakdown { margin-top: 1.2rem; }
+.stats-activity { display: grid; grid-template-columns: .45rem minmax(0, 1fr) auto; align-items: center; gap: .65rem; padding: .75rem 0; border-bottom: 1px solid var(--border); }
+.stats-activity h3 { font-size: .9rem; }
+.stats-activity i { width: .42rem; height: .42rem; border-radius: 50%; }

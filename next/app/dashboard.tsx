@@ -29,9 +29,10 @@ import {
   ArrowLeft,
   ArrowRight,
 } from "lucide-react";
-import { setBrowserReminders } from "@/lib/reminder-browser";
+import { checkOpenTabReminders, setBrowserReminders } from "@/lib/reminder-browser";
 import { auth, db } from "@/lib/firebase";
-import { count, total, dayKey, change, streak, shiftDay, monday, goalProgress, activityStats } from "@/lib/model.mjs";
+import { count, total, dayKey, change, streak, shiftDay, monday, goalProgress } from "@/lib/model.mjs";
+import { Statistics } from "@/components/statistics";
 import { Button } from "@/components/ui/button";
 import { SkeuoButton } from "@/components/ui/skeuo-button";
 import { AndroidDownload } from "@/components/android-download";
@@ -123,10 +124,6 @@ const names = [
   "Lime",
   "Teal",
 ];
-function statCount(value: number, noun: string) {
-  return `${value} ${noun}${value === 1 ? "" : "s"}`;
-}
-
 function demoHabits(): Habit[] {
   return ["Read", "Walk", "Meditate", "Practice"].map((name, i) => {
     const dailyCounts: Record<string, number> = {};
@@ -268,6 +265,7 @@ export default function Dashboard() {
   const [remindersOpen, setRemindersOpen] = useState(false);
   const [remindersOn, setRemindersOn] = useState(false);
   const [remindersBusy, setRemindersBusy] = useState(false);
+  const [reminderMode, setReminderMode] = useState("off");
   const [pastLog, setPastLog] = useState(false);
   const [undoDays, setUndoDays] = useState<Record<string, string[]>>({});
   const undoKey = demo ? "logit-undo:demo" : user ? "logit-undo:" + user.uid : null;
@@ -311,8 +309,17 @@ export default function Dashboard() {
     [],
   );
   useEffect(() => {
-    setRemindersOn(!!user && localStorage.getItem("logit-reminders:" + user.uid) === "on");
+    const mode = user ? localStorage.getItem("logit-reminders:" + user.uid) : null;
+    setReminderMode(mode || "off");
+    setRemindersOn(mode === "on" || mode === "push" || mode === "open-tab");
   }, [user]);
+  useEffect(() => {
+    if (!user || !loaded || syncError || reminderMode !== "open-tab") return;
+    const check = () => { if (navigator.onLine) checkOpenTabReminders(user.uid, habits); };
+    check();
+    const timer = window.setInterval(check, 60_000);
+    return () => window.clearInterval(timer);
+  }, [user, loaded, habits, syncError, reminderMode]);
   useEffect(() => {
     if (!user) {
       setPending([]);
@@ -537,6 +544,7 @@ export default function Dashboard() {
   }
   const pages = Math.max(1, Math.ceil(habits.length / 4));
   const currentPage = Math.min(page, pages - 1);
+  if (statsOpen) return <Statistics habits={habits} palette={palette} onBack={() => setStatsOpen(false)} />;
   return (
     <TooltipProvider>
       <main className="shell">
@@ -918,46 +926,27 @@ export default function Dashboard() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-        <Dialog open={statsOpen} onOpenChange={setStatsOpen}>
-          <DialogContent className="max-h-[85dvh] overflow-y-auto">
-            <DialogHeader className="text-left"><DialogTitle>Your statistics</DialogTitle><DialogDescription>How often you showed up in the last 28 days.</DialogDescription></DialogHeader>
-            {habits.length === 0 && <p>Log your first activity to start seeing progress here.</p>}
-            {habits.map(h => {
-              const today = dayKey();
-              const stats = activityStats(h, today);
-              const date = (day: string) => new Intl.DateTimeFormat("en-GB", {
-                month: "short", day: "numeric", timeZone: "UTC",
-              }).format(new Date(day + "T00:00:00Z"));
-              return <section key={h.id} className="logit-stat">
-                <h3>{h.name}</h3>
-                <p>{stats.first ? `${statCount(stats.recentLogs, "log")} across ${statCount(stats.recentDays, "day")} · ${statCount(stats.activeDays, "active day")} overall` : "Your first log will show up here."}</p>
-                {stats.first && <div className="logit-bars" aria-label="Logs in four consecutive 7-day periods, oldest first">
-                  {stats.weeks.map((value, i) => <div key={i}><span>{value}</span><div style={{height: `${Math.max(2, 48 * value / Math.max(1, ...stats.weeks))}px`, backgroundColor: value ? palette[h.color || 0] : "var(--border)"}} /></div>)}
-                </div>}
-                {stats.first && <p className="logit-chart-range"><span>{date(shiftDay(today, -27))}</span><span>{date(today)}</span></p>}
-              </section>;
-            })}
-          </DialogContent>
-        </Dialog>
         <Dialog open={remindersOpen} onOpenChange={setRemindersOpen}>
-          <DialogContent>
+          <DialogContent className="sm:max-w-sm">
             <DialogHeader><DialogTitle>Goal reminders</DialogTitle><DialogDescription>
               Get a heads-up at 8 pm if you're short, and a note at 9 am if a goal slipped by. Weekly reminders arrive on Sunday evening and Monday morning. Times are in India time.
+              {reminderMode === "open-tab" && " Keep LogIt open to get reminders in this browser."}
             </DialogDescription></DialogHeader>
             <DialogFooter>
-              <Button variant="outline" disabled={remindersBusy} onClick={() => {
+              <Button variant="ghost" size="sm" disabled={remindersBusy} onClick={() => {
                 if (user && !remindersOn) localStorage.setItem("logit-reminders:" + user.uid, "off");
                 setRemindersOpen(false);
               }}>{remindersOn ? "Close" : "Not now"}</Button>
-              <Button disabled={!user || remindersBusy} onClick={async () => {
+              <Button size="sm" disabled={!user || remindersBusy} onClick={async () => {
                 if (!user) return;
                 setRemindersBusy(true);
                 try {
-                  await setBrowserReminders(user, !remindersOn);
-                  localStorage.setItem("logit-reminders:" + user.uid, remindersOn ? "off" : "on");
+                  const mode = await setBrowserReminders(user, !remindersOn);
+                  localStorage.setItem("logit-reminders:" + user.uid, mode);
+                  setReminderMode(mode);
                   setRemindersOn(!remindersOn);
                   setRemindersOpen(false);
-                  toast.success(remindersOn ? "Reminders are off" : "Reminders are on");
+                  toast.success(mode === "open-tab" ? "Reminders are on while LogIt is open" : remindersOn ? "Reminders are off" : "Reminders are on");
                 } catch (e) { error(e); } finally { setRemindersBusy(false); }
               }}>{remindersOn ? "Turn off" : "Enable reminders"}</Button>
             </DialogFooter>
