@@ -5,6 +5,7 @@ import android.app.Activity
 import android.graphics.*
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.animation.DecelerateInterpolator
@@ -12,6 +13,15 @@ import android.widget.*
 import java.time.LocalDate
 
 object Theme {
+    val regular by lazy { Store.context.resources.getFont(R.font.dm_sans) }
+    val medium by lazy {
+        if (Build.VERSION.SDK_INT >= 28) Typeface.create(regular, 500, false) else regular
+    }
+    val semibold by lazy {
+        if (Build.VERSION.SDK_INT >= 28) Typeface.create(regular, 650, false)
+        else Typeface.create(regular, Typeface.BOLD)
+    }
+
     val colors =
         intArrayOf(
             0xff4ade80.toInt(),
@@ -164,6 +174,7 @@ fun Activity.label(s: String, size: Float = 16f, color: Int = Theme.text) =
     TextView(this).apply {
         text = s
         textSize = size
+        typeface = Theme.regular
         setTextColor(color)
         setPadding(0, dp(4), 0, dp(4))
     }
@@ -172,6 +183,8 @@ fun Activity.button(s: String, action: () -> Unit) =
     Button(this).apply {
         text = s
         isAllCaps = false
+        typeface = Theme.medium
+        letterSpacing = 0f
         minHeight = dp(48)
         setTextColor(Theme.bg)
         background = Theme.shape(Theme.text, dp(16).toFloat())

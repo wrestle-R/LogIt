@@ -2,7 +2,6 @@ package dev.logit.app
 
 import android.app.Activity
 import android.content.res.ColorStateList
-import android.graphics.Typeface
 import android.graphics.drawable.RippleDrawable
 import android.text.Editable
 import android.text.InputFilter
@@ -28,8 +27,8 @@ fun Activity.quietAction(text: String, action: () -> Unit) = button(text, action
     stateListAnimator = null
 }
 
-private fun Activity.fieldLabel(text: String, topDp: Int = 0) = label(text, 12f, Theme.muted).apply {
-    setTypeface(null, Typeface.BOLD)
+private fun Activity.fieldLabel(text: String, topDp: Int = 0) = label(text, 13f, Theme.muted).apply {
+    typeface = Theme.semibold
     setPadding(0, dp(topDp), 0, dp(6))
 }
 
@@ -45,6 +44,7 @@ fun MainActivity.editActivity(habit: Habit? = null) {
         inputType = type
         setSingleLine()
         textSize = 15f
+        typeface = Theme.regular
         setTextColor(Theme.text)
         setHintTextColor(Theme.muted)
         background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
@@ -89,7 +89,7 @@ fun MainActivity.editActivity(habit: Habit? = null) {
         filters = arrayOf(InputFilter.LengthFilter(3))
         gravity = Gravity.CENTER
         textSize = 15f
-        setTypeface(null, Typeface.BOLD)
+        typeface = Theme.semibold
         setTextColor(Theme.text)
         setHintTextColor(Theme.muted)
         background = null
@@ -124,7 +124,7 @@ fun MainActivity.editActivity(habit: Habit? = null) {
             tab.isSelected = active
             tab.background = if (active) Theme.shape(Theme.text, dp(7).toFloat()) else null
             tab.setTextColor(if (active) Theme.bg else Theme.muted)
-            tab.setTypeface(null, if (active) Typeface.BOLD else Typeface.NORMAL)
+            tab.typeface = if (active) Theme.semibold else Theme.regular
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 tab.stateDescription = if (active) "Selected" else "Not selected"
             }
@@ -289,7 +289,7 @@ fun Activity.backdate(habit: Habit) {
         gravity = Gravity.CENTER_VERTICAL
     }
     val dateValue = label("", 14f, Theme.text).apply {
-        setTypeface(null, Typeface.BOLD)
+        typeface = Theme.semibold
         setPadding(0, 0, 0, 0)
     }
     lateinit var refreshChips: () -> Unit
@@ -312,7 +312,7 @@ fun Activity.backdate(habit: Habit) {
                 if (active) Theme.shape(Theme.text, dp(8).toFloat())
                 else Theme.bordered(Theme.bg, Theme.controlBorder, dp(8).toFloat(), dp(1))
             chip.setTextColor(if (active) Theme.bg else Theme.muted)
-            chip.setTypeface(null, if (active) Typeface.BOLD else Typeface.NORMAL)
+            chip.typeface = if (active) Theme.semibold else Theme.regular
             chip.textSize = 13f
             chip.minHeight = dp(38)
             chip.minimumHeight = dp(38)
@@ -366,7 +366,7 @@ private fun Activity.showThemedDatePicker(initial: LocalDate, maxDate: LocalDate
         gravity = Gravity.CENTER_VERTICAL
     }
     val monthTitle = label("", 15f, Theme.text).apply {
-        setTypeface(null, Typeface.BOLD)
+        typeface = Theme.semibold
         gravity = Gravity.CENTER
         setPadding(0, 0, 0, 0)
     }
@@ -393,7 +393,7 @@ private fun Activity.showThemedDatePicker(initial: LocalDate, maxDate: LocalDate
     for (wd in listOf("M", "T", "W", "T", "F", "S", "S")) {
         weekdays.addView(label(wd, 11f, Theme.muted).apply {
             gravity = Gravity.CENTER
-            setTypeface(null, Typeface.BOLD)
+            typeface = Theme.semibold
             setPadding(0, 0, 0, dp(4))
         }, LinearLayout.LayoutParams(0, -2, 1f))
     }
@@ -433,7 +433,7 @@ private fun Activity.showThemedDatePicker(initial: LocalDate, maxDate: LocalDate
                 text = dayNum.toString()
                 textSize = 13f
                 gravity = Gravity.CENTER
-                setTypeface(null, if (isSelected || isToday) Typeface.BOLD else Typeface.NORMAL)
+                typeface = if (isSelected || isToday) Theme.semibold else Theme.regular
                 setTextColor(
                     when {
                         isSelected -> Theme.bg

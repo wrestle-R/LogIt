@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.Dialog
 import android.content.DialogInterface
 import android.graphics.Color
-import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.view.Gravity
 import android.view.View
@@ -20,9 +19,9 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
             setPadding(owner.dp(20), owner.dp(18), owner.dp(20), owner.dp(16))
         }
     private val heading =
-        owner.label("", 20f).apply {
-            setTypeface(null, Typeface.BOLD)
-            letterSpacing = -.025f
+        owner.label("", 22f).apply {
+            typeface = Theme.semibold
+            letterSpacing = -.015f
             setPadding(0, 0, 0, 0)
         }
     private val message = owner.label("", 14f, Theme.muted).apply {
@@ -117,7 +116,7 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
                     } else {
                         background = Theme.shape(Theme.text, owner.dp(10).toFloat())
                         setTextColor(Theme.bg)
-                        setTypeface(null, Typeface.BOLD)
+                        typeface = Theme.semibold
                     }
                 }
         buttons[which] = button

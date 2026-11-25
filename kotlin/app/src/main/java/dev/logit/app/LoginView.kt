@@ -22,7 +22,7 @@ fun Activity.loginView(busy: Boolean, error: String?, signIn: () -> Unit): View 
     val definition = block()
     definition.addView(
         label("persistence", 27f).apply {
-            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+            typeface = Theme.medium
             letterSpacing = -.025f
             setPadding(0, 0, 0, dp(4))
         }
@@ -57,7 +57,7 @@ fun Activity.loginView(busy: Boolean, error: String?, signIn: () -> Unit): View 
     )
     definition.addView(
         label("“Persistence and endurance will make you omnipotent.”", 12f, Theme.muted).apply {
-            setTypeface(null, Typeface.ITALIC)
+            setTypeface(Theme.regular, Typeface.ITALIC)
         }
     )
     content.addView(definition, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(18) })
@@ -65,7 +65,7 @@ fun Activity.loginView(busy: Boolean, error: String?, signIn: () -> Unit): View 
     val auth = block()
     auth.addView(
         label("Your habits", 19f).apply {
-            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+            typeface = Theme.medium
             setPadding(0, 0, 0, dp(4))
         }
     )

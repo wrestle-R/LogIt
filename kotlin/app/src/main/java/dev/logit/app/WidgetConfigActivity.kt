@@ -5,7 +5,6 @@ import android.appwidget.AppWidgetManager
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
-import android.graphics.Typeface
 import android.graphics.drawable.RippleDrawable
 import android.os.Bundle
 import android.view.Gravity
@@ -88,7 +87,7 @@ class WidgetConfigActivity : Activity() {
                 setPadding(0, 0, 0, 0)
             }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(12) })
             addView(label("Widget setup", 22f).apply {
-                setTypeface(null, Typeface.BOLD)
+                typeface = Theme.semibold
                 setPadding(0, 0, 0, 0)
             }, LinearLayout.LayoutParams(0, -2, 1f))
         })
@@ -141,7 +140,7 @@ class WidgetConfigActivity : Activity() {
         }
         fun select(title: String, options: Array<String>, initial: Int, swatches: IntArray? = null): ChoiceView {
             root.addView(label(title, 12f, Theme.muted).apply {
-                setTypeface(null, Typeface.BOLD)
+                typeface = Theme.semibold
                 setPadding(0, dp(6), 0, dp(4))
             })
             val choice = ChoiceView(this, options, initial, swatches)
@@ -188,7 +187,7 @@ class WidgetConfigActivity : Activity() {
         }
         root.addView(gradientRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6); bottomMargin = dp(8) })
         root.addView(label("Preview", 12f, Theme.muted).apply {
-            setTypeface(null, Typeface.BOLD)
+            typeface = Theme.semibold
             setPadding(0, dp(4), 0, dp(4))
         })
         val preview = column().apply { setPadding(dp(12), dp(12), dp(12), dp(12)) }
@@ -213,7 +212,7 @@ class WidgetConfigActivity : Activity() {
             if (chosen.isEmpty()) preview.addView(label("Select an activity to preview", 14f, muted))
             chosen.forEach { habit ->
                 val heading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-                heading.addView(label(habit.name, 15f, foreground).apply { setTypeface(null, 1) }, LinearLayout.LayoutParams(0, -2, 1f))
+                heading.addView(label(habit.name, 15f, foreground).apply { typeface = Theme.semibold }, LinearLayout.LayoutParams(0, -2, 1f))
                 heading.addView(label("${habit.count(Dates.today())} today", 12f, muted))
                 preview.addView(heading)
                 if (pinKind != "quick") {
@@ -311,7 +310,7 @@ class WidgetConfigActivity : Activity() {
                 finish()
             }.apply {
                 textSize = 14f
-                setTypeface(null, Typeface.BOLD)
+                typeface = Theme.semibold
                 stateListAnimator = null
                 background = Theme.shape(Theme.text, dp(10).toFloat())
             },
@@ -424,7 +423,7 @@ class ChoiceView(
                     text = item
                     textSize = 14f
                     setTextColor(Theme.text)
-                    setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+                    typeface = if (selected) Theme.semibold else Theme.regular
                     setSingleLine(true)
                     ellipsize = android.text.TextUtils.TruncateAt.END
                 }, LayoutParams(0, -2, 1f))
@@ -433,7 +432,7 @@ class ChoiceView(
                         text = "✓"
                         textSize = 14f
                         setTextColor(Theme.text)
-                        setTypeface(null, Typeface.BOLD)
+                        typeface = Theme.semibold
                         setPadding(a.dp(8), 0, 0, 0)
                     })
                 }

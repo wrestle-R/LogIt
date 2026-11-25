@@ -6,7 +6,6 @@ import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
-import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
@@ -83,7 +82,7 @@ class DetailsActivity : Activity() {
                 setPadding(0, 0, 0, 0)
             }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(12) })
             addView(label(title, 22f).apply {
-                setTypeface(null, Typeface.BOLD)
+                typeface = Theme.semibold
                 setPadding(0, 0, 0, 0)
             }, LinearLayout.LayoutParams(0, -2, 1f))
         })
@@ -112,7 +111,7 @@ class DetailsActivity : Activity() {
                 val textCol = LinearLayout(this@DetailsActivity).apply {
                     orientation = LinearLayout.VERTICAL
                     addView(label(name, 16f, Theme.text).apply {
-                        setTypeface(null, Typeface.BOLD)
+                        typeface = Theme.semibold
                         setPadding(0, 0, 0, 0)
                     })
                     addView(label(subtitle, 13f, Theme.muted).apply {
@@ -202,7 +201,7 @@ class DetailsActivity : Activity() {
                 }.apply {
                     textSize = 13f
                     setTextColor(Theme.text)
-                    setTypeface(null, Typeface.BOLD)
+                    typeface = Theme.semibold
                     background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(8).toFloat(), dp(1))
                     setPadding(dp(12), 0, dp(12), 0)
                     contentDescription = "Time · $formatted"
@@ -225,7 +224,7 @@ class DetailsActivity : Activity() {
 
         val body = column().apply { background = null; setPadding(0, 0, 0, 0) }
         val preview = label("", 28f, Theme.text).apply {
-            setTypeface(null, Typeface.BOLD)
+            typeface = Theme.semibold
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, dp(12))
         }
@@ -237,7 +236,7 @@ class DetailsActivity : Activity() {
                 gravity = Gravity.CENTER_HORIZONTAL
             }
             col.addView(label(labelText, 11f, Theme.muted).apply {
-                setTypeface(null, Typeface.BOLD)
+                typeface = Theme.semibold
                 setPadding(0, 0, 0, dp(4))
             })
             val box = LinearLayout(this).apply {
@@ -260,8 +259,8 @@ class DetailsActivity : Activity() {
             return col
         }
 
-        val hourView = label("", 16f, Theme.text).apply { setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(0, 0, 0, 0) }
-        val minuteView = label("", 16f, Theme.text).apply { setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(0, 0, 0, 0) }
+        val hourView = label("", 16f, Theme.text).apply { typeface = Theme.semibold; gravity = Gravity.CENTER; setPadding(0, 0, 0, 0) }
+        val minuteView = label("", 16f, Theme.text).apply { typeface = Theme.semibold; gravity = Gravity.CENTER; setPadding(0, 0, 0, 0) }
         val amBtn = quietAction("AM") {}
         val pmBtn = quietAction("PM") {}
 
@@ -274,7 +273,7 @@ class DetailsActivity : Activity() {
                 btn.isSelected = active
                 btn.background = if (active) Theme.shape(Theme.text, dp(7).toFloat()) else null
                 btn.setTextColor(if (active) Theme.bg else Theme.muted)
-                btn.setTypeface(null, if (active) Typeface.BOLD else Typeface.NORMAL)
+                btn.typeface = if (active) Theme.semibold else Theme.regular
                 btn.setPadding(0, 0, 0, 0)
             }
         }
@@ -358,7 +357,7 @@ class DetailsActivity : Activity() {
                     minimumHeight = dp(40)
                     isSelected = active
                     setTextColor(if (active) Theme.bg else Theme.muted)
-                    setTypeface(null, if (active) Typeface.BOLD else Typeface.NORMAL)
+                    typeface = if (active) Theme.semibold else Theme.regular
                     if (active) background = Theme.shape(Theme.text, dp(7).toFloat())
                 }, LinearLayout.LayoutParams(0, dp(40), 1f))
             }
@@ -381,7 +380,7 @@ class DetailsActivity : Activity() {
                 addView(LinearLayout(this@DetailsActivity).apply {
                     orientation = LinearLayout.VERTICAL
                     addView(label(value, 26f).apply {
-                        setTypeface(null, Typeface.BOLD)
+                        typeface = Theme.semibold
                         setPadding(0, dp(2), 0, 0)
                     })
                     addView(label(caption, 12f, Theme.muted))
@@ -394,7 +393,7 @@ class DetailsActivity : Activity() {
                 bottomMargin = dp(10)
             })
             summary.addView(label("No logs in this period.", 14f, Theme.text).apply {
-                setTypeface(null, Typeface.BOLD)
+                typeface = Theme.semibold
                 setPadding(0, 0, 0, dp(2))
             })
             summary.addView(label("Log completions from the dashboard to see trends here.", 13f, Theme.muted).apply {
@@ -407,13 +406,13 @@ class DetailsActivity : Activity() {
                     Theme.colors[habit.color.coerceIn(Theme.colors.indices)])
             }
             summary.addView(label(if (bucketSize == 1) "Logs per day" else "Logs per week", 13f).apply {
-                setTypeface(null, Typeface.BOLD)
+                typeface = Theme.semibold
             }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
             summary.addView(StatisticsChart(this, dates, series, bucketSize), LinearLayout.LayoutParams(-1, dp(132)))
         }
         root.addView(summary)
         if (selected == null && habits.isNotEmpty()) {
-            root.addView(label("By activity", 16f).apply { setTypeface(null, Typeface.BOLD) },
+            root.addView(label("By activity", 16f).apply { typeface = Theme.semibold },
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
             root.addView(panel().apply {
                 setPadding(dp(12), dp(6), dp(12), dp(4))
@@ -439,7 +438,7 @@ class DetailsActivity : Activity() {
                     gravity = Gravity.CENTER_VERTICAL
                     minimumHeight = dp(40)
                     addView(label(k, 14f, Theme.muted).apply { setPadding(0, 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
-                    addView(label(v, 14f, Theme.text).apply { setTypeface(null, Typeface.BOLD); setPadding(0, 0, 0, 0) })
+                    addView(label(v, 14f, Theme.text).apply { typeface = Theme.semibold; setPadding(0, 0, 0, 0) })
                 }
                 addView(infoRow("All time", "${numbers.format(selected.total())} logs"))
                 addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(4); bottomMargin = dp(4) })
@@ -455,7 +454,7 @@ class DetailsActivity : Activity() {
             minimumHeight = dp(if (header) 36 else 48)
             val color = if (header) Theme.muted else Theme.text
             addView(label(name, if (header) 12f else 14f, color).apply {
-                if (!header) setTypeface(null, Typeface.BOLD)
+                if (!header) typeface = Theme.semibold
                 activityColor?.let {
                     val marker = Theme.shape(it, dp(3).toFloat())
                     marker.setBounds(0, 0, dp(8), dp(8))

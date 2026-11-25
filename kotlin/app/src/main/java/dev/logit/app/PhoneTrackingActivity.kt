@@ -4,7 +4,6 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -100,7 +99,7 @@ class PhoneTrackingActivity : Activity() {
                 textSize = 26f
                 contentDescription = "Back"
             }, LinearLayout.LayoutParams(dp(44), dp(48)))
-            addView(label(title, 22f).apply { setTypeface(null, Typeface.BOLD) },
+            addView(label(title, 22f).apply { typeface = Theme.semibold },
                 LinearLayout.LayoutParams(0, -2, 1f))
         })
 
@@ -127,7 +126,7 @@ class PhoneTrackingActivity : Activity() {
         addView(panel, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
     }
 
-    private fun title(text: String) = label(text, 16f).apply { setTypeface(null, Typeface.BOLD) }
+    private fun title(text: String) = label(text, 16f).apply { typeface = Theme.semibold }
 
     private fun action(text: String, primary: Boolean = false, onClick: () -> Unit) =
         (if (primary) button(text, onClick) else quietAction(text, onClick)).apply {
@@ -516,6 +515,7 @@ class PhoneTrackingActivity : Activity() {
             setText(value)
             contentDescription = caption
             textSize = 15f
+            typeface = Theme.regular
             setTextColor(Theme.text)
             applyMonochromeCursor(this)
             filters = arrayOf(InputFilter.LengthFilter(if (number) 4 else 80))

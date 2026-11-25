@@ -3,7 +3,6 @@ package dev.logit.app
 import android.app.*
 import android.content.*
 import android.graphics.Color
-import android.graphics.Typeface
 import android.os.Bundle
 import android.view.*
 import android.widget.*
@@ -139,7 +138,7 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(8) },
         )
         header.addView(
-            label("LogIt", 22f).apply { setTypeface(null, 1) },
+            label("LogIt", 22f).apply { typeface = Theme.semibold },
             LinearLayout.LayoutParams(0, -2, 1f),
         )
         header.addView(
@@ -167,7 +166,7 @@ class MainActivity : Activity() {
         val heading =
             LinearLayout(this).apply {
                 orientation = 1
-                addView(label("Your activities", 22f).apply { setTypeface(null, 1) })
+                addView(label("Your activities", 22f).apply { typeface = Theme.semibold })
                 addView(
                     label(
                         java.time.LocalDate.parse(Dates.today())
@@ -243,7 +242,7 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.VERTICAL
                 background = Theme.bordered(Theme.card, Theme.cardBorder, dp(12).toFloat(), dp(1))
                 setPadding(dp(16), dp(18), dp(16), dp(18))
-                addView(label("No activities yet", 17f).apply { setTypeface(null, Typeface.BOLD) })
+                addView(label("No activities yet", 17f).apply { typeface = Theme.semibold })
                 addView(label("Add an activity to start tracking daily completions.", 13f, Theme.muted))
                 addView(button("+ Add activity") { add() }.apply {
                     textSize = 13f
@@ -271,7 +270,7 @@ class MainActivity : Activity() {
             val top = row()
             top.addView(
                 label(h.name, 19f).apply {
-                    setTypeface(null, 1)
+                    typeface = Theme.semibold
                     maxLines = 1
                     ellipsize = android.text.TextUtils.TruncateAt.END
                     setPadding(0, 0, 0, 0)
@@ -394,7 +393,7 @@ class MainActivity : Activity() {
             nav.addView(
                 label("${page+1} / ${(Store.habits.size+3)/4}", 12f, Theme.muted).apply {
                     gravity = Gravity.CENTER
-                    setTypeface(null, Typeface.BOLD)
+                    typeface = Theme.semibold
                 },
                 LinearLayout.LayoutParams(dp(64), dp(44)),
             )
@@ -417,7 +416,7 @@ class MainActivity : Activity() {
         }
         banner.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(label("Update available", 14f).apply { setTypeface(null, Typeface.BOLD) })
+            addView(label("Update available", 14f).apply { typeface = Theme.semibold })
             addView(label("LogIt $version", 12f, Theme.muted))
         }, LinearLayout.LayoutParams(0, -2, 1f))
         banner.addView(button("Update") { AppUpdates.update(this) }.apply {
@@ -450,7 +449,7 @@ class MainActivity : Activity() {
                 val textCol = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.VERTICAL
                     addView(label(title, 15f, if (destructive) Theme.destructive else Theme.text).apply {
-                        setTypeface(null, Typeface.BOLD)
+                        typeface = Theme.semibold
                         setPadding(0, 0, 0, 0)
                     })
                     val subRow = LinearLayout(this@MainActivity).apply {
@@ -558,12 +557,12 @@ class MainActivity : Activity() {
                     background = Theme.shape(Theme.colors[index], dp(8).toFloat())
                 }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(10) })
                 addView(label(name, 14f, Theme.text).apply {
-                    setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+                    typeface = if (selected) Theme.semibold else Theme.regular
                     setPadding(0, 0, 0, 0)
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 if (selected) {
                     addView(label("✓", 14f, Theme.text).apply {
-                        setTypeface(null, Typeface.BOLD)
+                        typeface = Theme.semibold
                         setPadding(dp(4), 0, 0, 0)
                     })
                 }
