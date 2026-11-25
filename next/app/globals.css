@@ -473,3 +473,4 @@ h3 {
 .logit-bars > div { text-align: center; font-size: .75rem; }
 .logit-bars > div > div { border-radius: .25rem; margin-top: .25rem; }
 .activities footer .toolbar { flex-wrap: wrap; }
+.logit-chart-range { display: flex; justify-content: space-between; margin-top: .4rem; }

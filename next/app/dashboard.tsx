@@ -123,6 +123,10 @@ const names = [
   "Lime",
   "Teal",
 ];
+function statCount(value: number, noun: string) {
+  return `${value} ${noun}${value === 1 ? "" : "s"}`;
+}
+
 function demoHabits(): Habit[] {
   return ["Read", "Walk", "Meditate", "Practice"].map((name, i) => {
     const dailyCounts: Record<string, number> = {};
@@ -916,16 +920,21 @@ export default function Dashboard() {
         </Dialog>
         <Dialog open={statsOpen} onOpenChange={setStatsOpen}>
           <DialogContent className="max-h-[85dvh] overflow-y-auto">
-            <DialogHeader><DialogTitle>Your statistics</DialogTitle><DialogDescription>How often you showed up in the last 28 days.</DialogDescription></DialogHeader>
+            <DialogHeader className="text-left"><DialogTitle>Your statistics</DialogTitle><DialogDescription>How often you showed up in the last 28 days.</DialogDescription></DialogHeader>
             {habits.length === 0 && <p>Log your first activity to start seeing progress here.</p>}
             {habits.map(h => {
-              const stats = activityStats(h, dayKey());
+              const today = dayKey();
+              const stats = activityStats(h, today);
+              const date = (day: string) => new Intl.DateTimeFormat("en-GB", {
+                month: "short", day: "numeric", timeZone: "UTC",
+              }).format(new Date(day + "T00:00:00Z"));
               return <section key={h.id} className="logit-stat">
                 <h3>{h.name}</h3>
-                <p>{stats.first ? `${stats.recentLogs} logs across ${stats.recentDays} days · ${stats.activeDays} active days overall` : "Your first log will show up here."}</p>
+                <p>{stats.first ? `${statCount(stats.recentLogs, "log")} across ${statCount(stats.recentDays, "day")} · ${statCount(stats.activeDays, "active day")} overall` : "Your first log will show up here."}</p>
                 {stats.first && <div className="logit-bars" aria-label="Logs in four consecutive 7-day periods, oldest first">
-                  {stats.weeks.map((value, i) => <div key={i}><span>{value}</span><div style={{height: `${Math.max(2, 48 * value / Math.max(1, ...stats.weeks))}px`, backgroundColor: palette[h.color || 0]}} /></div>)}
+                  {stats.weeks.map((value, i) => <div key={i}><span>{value}</span><div style={{height: `${Math.max(2, 48 * value / Math.max(1, ...stats.weeks))}px`, backgroundColor: value ? palette[h.color || 0] : "var(--border)"}} /></div>)}
                 </div>}
+                {stats.first && <p className="logit-chart-range"><span>{date(shiftDay(today, -27))}</span><span>{date(today)}</span></p>}
               </section>;
             })}
           </DialogContent>
