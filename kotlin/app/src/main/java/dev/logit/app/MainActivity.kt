@@ -10,6 +10,10 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.google.android.gms.auth.api.signin.*
 import com.google.android.gms.common.api.ApiException
 import com.google.firebase.auth.GoogleAuthProvider
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.launch
 
 class MainActivity : Activity() {
     private var dashboardScroll: ScrollView? = null
@@ -17,6 +21,8 @@ class MainActivity : Activity() {
     private var focus: String? = null
     private var authBusy = false
     private var authError: String? = null
+    private val healthScope = MainScope()
+    private var resumed = false
 
     override fun onCreate(state: Bundle?) {
         val splash = installSplashScreen()
@@ -25,7 +31,10 @@ class MainActivity : Activity() {
             view.view.animate().alpha(0f).setDuration(220).withEndAction { view.remove() }.start()
         }
         focus = intent.getStringExtra("habit")
-        Store.changed = { runOnUiThread { render() } }
+        Store.changed = { runOnUiThread {
+            render()
+            if (resumed) checkHealth()
+        } }
         Store.error = { message -> runOnUiThread { toast(message) } }
         Store.listen()
         render()
@@ -34,13 +43,17 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        resumed = true
         PhoneTracking.schedule()
         PhoneTracking.syncSleep()
         AppUpdates.refresh(this) { render() }
+        checkHealth(force = true)
         render()
     }
 
     override fun onPause() {
+        resumed = false
+        healthScope.coroutineContext.cancelChildren()
         AppUpdates.pause(this)
         super.onPause()
     }
@@ -61,9 +74,15 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        healthScope.cancel()
         Store.changed = null
         Store.error = null
         super.onDestroy()
+    }
+
+    private fun checkHealth(force: Boolean = false) {
+        val owner = Store.trackingOwner() ?: return
+        healthScope.launch { HealthTracking.check(applicationContext, owner, force) }
     }
 
     private fun routeLog() {

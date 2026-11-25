@@ -13,5 +13,7 @@ dependencies {
  implementation("com.google.android.gms:play-services-auth:21.4.0")
  implementation("androidx.work:work-runtime:2.10.1")
  implementation("androidx.core:core-splashscreen:1.2.0")
+ implementation("androidx.health.connect:connect-client:1.1.0")
+ implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
  testImplementation("junit:junit:4.13.2")
 }

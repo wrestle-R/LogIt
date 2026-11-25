@@ -20,20 +20,33 @@ import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class SleepSummary(val bedtime: Long, val wakeTime: Long, val edited: Boolean = false) {
-    internal fun fields() = mapOf("bedtime" to bedtime, "wakeTime" to wakeTime, "edited" to edited)
+data class SleepSummary(
+    val bedtime: Long,
+    val wakeTime: Long,
+    val edited: Boolean = false,
+    val healthConnect: Boolean = false,
+) {
+    internal fun fields() = mapOf(
+        "bedtime" to bedtime, "wakeTime" to wakeTime, "edited" to edited, "healthConnect" to healthConnect,
+    )
+
+    internal val sourcePriority get() = when {
+        edited -> 2
+        healthConnect -> 1
+        else -> 0
+    }
 
     companion object {
-        internal fun parse(bedtime: Any?, wakeTime: Any?, edited: Any?): SleepSummary? {
+        internal fun parse(bedtime: Any?, wakeTime: Any?, edited: Any?, healthConnect: Any? = null): SleepSummary? {
             val start = (bedtime as? Number)?.toLong() ?: return null
             val end = (wakeTime as? Number)?.toLong() ?: return null
-            return if (end > start) SleepSummary(start, end, edited == true) else null
+            return if (end > start) SleepSummary(start, end, edited == true, healthConnect == true) else null
         }
     }
 }
 
 internal fun SleepSummary?.canBeReplacedBy(summary: SleepSummary): Boolean =
-    this != summary && (this?.edited != true || summary.edited)
+    this == null || (this != summary && summary.sourcePriority >= sourcePriority)
 
 data class Habit(
     val id: String,
@@ -207,8 +220,9 @@ object Store {
                         },
                         sleepSummaries = summaries.keys().asSequence().mapNotNull { day ->
                             val fields = summaries.optJSONObject(day) ?: return@mapNotNull null
-                            SleepSummary.parse(fields.opt("bedtime"), fields.opt("wakeTime"), fields.opt("edited"))
-                                ?.let { day to it }
+                            SleepSummary.parse(
+                                fields.opt("bedtime"), fields.opt("wakeTime"), fields.opt("edited"), fields.opt("healthConnect"),
+                            )?.let { day to it }
                         }.toMap(),
                         skippedAutomaticOps = stringSet(o.optJSONArray("skippedAutomaticOps")),
                     )
@@ -288,7 +302,7 @@ object Store {
 
     private fun decodeSummary(value: Any?): SleepSummary? {
         val fields = value as? Map<*, *> ?: return null
-        return SleepSummary.parse(fields["bedtime"], fields["wakeTime"], fields["edited"])
+        return SleepSummary.parse(fields["bedtime"], fields["wakeTime"], fields["edited"], fields["healthConnect"])
     }
 
     fun decodeDocument(document: DocumentSnapshot): Habit {

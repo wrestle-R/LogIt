@@ -17,20 +17,34 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.core.widget.doAfterTextChanged
+import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.PermissionController
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
-class PhoneTrackingActivity : Activity() {
+class PhoneTrackingActivity : ComponentActivity() {
     private val screen get() = intent.getStringExtra("trackingScreen")
     private var selectedDay: LocalDate? = null
     private var offerWidget = false
     private var scroll: ScrollView? = null
     private val timeLabel = DateTimeFormatter.ofPattern("h:mm a")
     private val inputTime = DateTimeFormatter.ofPattern("HH:mm")
+    private val healthScope = MainScope()
+    private var healthAccess: Set<String>? = null
+    private var checkingHealth = false
+    private var healthJob: Job? = null
+    private val healthPermission = registerForActivityResult(PermissionController.createRequestPermissionResultContract()) {
+        refreshHealth(force = true, announce = false)
+    }
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -51,11 +65,18 @@ class PhoneTrackingActivity : Activity() {
         PhoneTracking.syncSleep()
         render()
         maybeOfferWidget()
+        if (screen == "health") refreshHealth(force = true, announce = false)
     }
 
     override fun onPause() {
         PhoneTracking.updated = null
+        healthJob?.cancel()
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        healthScope.cancel()
+        super.onDestroy()
     }
 
     private fun render() {
@@ -91,6 +112,7 @@ class PhoneTrackingActivity : Activity() {
         val title = when (screen) {
             "sleep" -> "Sleep"
             "limits" -> "Screen time"
+            "health" -> "Health Connect"
             else -> "App automations"
         }
         root.addView(LinearLayout(this).apply {
@@ -111,9 +133,139 @@ class PhoneTrackingActivity : Activity() {
         when (screen) {
             "sleep" -> showSleep(root, owner)
             "limits" -> showLimits(root, owner)
+            "health" -> {
+                showHealth(root, owner)
+                return
+            }
             else -> showAppRules(root, owner)
         }
         root.addCard(permissionCard(owner))
+    }
+
+    private fun refreshHealth(force: Boolean = false, announce: Boolean = force) {
+        val owner = Store.trackingOwner() ?: return
+        healthJob?.cancel()
+        checkingHealth = true
+        healthJob = healthScope.launch {
+            healthAccess = HealthTracking.grants(applicationContext)
+            val result = HealthTracking.check(applicationContext, owner, force)
+            checkingHealth = false
+            if (Store.trackingOwner() != owner) return@launch
+            render()
+            if (announce) toast(when (result) {
+                HealthCheck.CHECKED -> "Health data checked."
+                HealthCheck.NEEDS_ACCESS -> "Allow access to check health data."
+                HealthCheck.NO_RULES -> "Set up a health rule first."
+                HealthCheck.UNAVAILABLE -> "Health Connect is unavailable."
+                HealthCheck.FAILED -> "Some health data couldn't be read. Try again."
+            })
+        }
+    }
+
+    private fun showHealth(root: LinearLayout, owner: String) {
+        val status = HealthTracking.status(this)
+        root.addCard(card().apply {
+            addView(label("Log activities from steps, recorded workouts, or sleep when you open LogIt.", 14f, Theme.muted))
+            if (status == HealthConnectClient.SDK_AVAILABLE) {
+                addAction("Manage health access") {
+                    runCatching { startActivity(Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS)) }
+                        .onFailure { toast("Couldn't open Health Connect settings.") }
+                }
+            } else {
+                addView(label(if (status == HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED) {
+                    "Install or update Health Connect to continue."
+                } else "Health Connect is unavailable on this device.", 14f, Theme.muted))
+                if (status == HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED && Build.VERSION.SDK_INT < 34) {
+                    addAction("Health Connect in Google Play") {
+                        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
+                            "https://play.google.com/store/apps/details?id=${HealthTracking.providerPackage}",
+                        )))
+                    }
+                }
+            }
+        })
+        if (status != HealthConnectClient.SDK_AVAILABLE) return
+
+        val habits = Store.habits.associateBy { it.id }
+        val sleep = PhoneTracking.sleep(owner)?.takeIf { it.activityId in habits }
+        var connected = false
+        for (metric in HealthMetric.entries) {
+            val rule = HealthTracking.rule(owner, metric)?.takeIf { it.activityId in habits }
+            val allowed = metric.permission in healthAccess.orEmpty()
+            connected = connected || (rule != null && allowed)
+            root.addCard(card().apply {
+                addView(title(metric.title))
+                val summary = when (metric) {
+                    HealthMetric.Steps -> "Log an activity when you reach a daily step target."
+                    HealthMetric.Sleep -> "Import bedtime and wake time into your Sleep activity."
+                    else -> "Log an activity when a recorded ${metric.title.lowercase(java.util.Locale.ROOT)} session meets your time target."
+                }
+                val habit = rule?.let { habits[it.activityId] }
+                val target = when (metric) {
+                    HealthMetric.Steps -> " · ${rule?.target} steps a day"
+                    HealthMetric.Sleep -> ""
+                    else -> " · ${rule?.target} minutes per session"
+                }
+                addView(label(if (habit == null) summary else habit.name + target, 14f, Theme.muted))
+
+                if (rule != null && !allowed && healthAccess != null) {
+                    val accessLabel = when (metric) {
+                        HealthMetric.Steps -> "Allow steps access"
+                        HealthMetric.Sleep -> "Allow sleep access"
+                        else -> "Allow workout access"
+                    }
+                    addAction(accessLabel, true) {
+                        runCatching { healthPermission.launch(setOf(metric.permission)) }
+                            .onFailure { toast("Couldn't open health permissions.") }
+                    }
+                } else if (rule != null && healthAccess == null && !checkingHealth) {
+                    addAction("Retry health access check") { refreshHealth() }
+                }
+                when {
+                    metric != HealthMetric.Sleep -> addAction(if (rule == null) "Set up ${metric.title.lowercase(java.util.Locale.ROOT)}" else "Edit rule") {
+                        healthRuleEditor(owner, metric, rule)
+                    }
+                    rule != null -> addAction("Stop importing sleep") {
+                        HealthTracking.saveRule(owner, metric, null)
+                        render()
+                    }
+                    sleep != null -> addAction("Import sleep") {
+                        HealthTracking.saveRule(owner, metric, HealthRule(sleep.activityId, 0, LocalDate.parse(Dates.today())))
+                        render()
+                        refreshHealth()
+                    }
+                    else -> addAction("Set up Sleep activity") { openTracking("sleep") }
+                }
+            })
+        }
+        if (connected) root.addAction("Check health data now") { refreshHealth(force = true) }
+        root.addView(label("LogIt syncs activity completions and sleep summaries to your account. Health records are read on this phone.", 12f, Theme.muted))
+    }
+
+    private fun healthRuleEditor(owner: String, metric: HealthMetric, existing: HealthRule?) {
+        val habits = Store.habits
+        if (habits.isEmpty()) { toast("Add an activity first."); return }
+        val form = form()
+        val activity = activityChoice(form, habits, existing?.activityId, optional = false)
+        val target = form.field(if (metric == HealthMetric.Steps) "Steps per day" else "Minutes per session",
+            (existing?.target ?: metric.defaultTarget).toString(), number = true, maxLength = 6)
+        val error = form.error()
+        showForm("${metric.title} rule", form, "Save rule", existing?.let {
+            { HealthTracking.saveRule(owner, metric, null); render() }
+        }) { dialog ->
+            val habit = activity()
+            val count = target.text.toString().toIntOrNull()
+            if (habit == null || count == null || count !in 1..metric.maxTarget) {
+                error.text = "Choose an activity and enter a target from 1 to ${metric.maxTarget}."
+                return@showForm
+            }
+            val since = if (existing?.activityId == habit.id && existing.target == count) existing.since
+                else LocalDate.parse(Dates.today())
+            HealthTracking.saveRule(owner, metric, HealthRule(habit.id, count, since))
+            dialog.dismiss()
+            render()
+            refreshHealth()
+        }
     }
 
     private fun card() = LinearLayout(this).apply {
@@ -193,8 +345,11 @@ class PhoneTrackingActivity : Activity() {
             addView(title(if (day == today) "Last night" else day.format(DateTimeFormatter.ofPattern("EEE, d MMM"))))
             addView(label(if (recent == null) "No sleep recorded" else
                 formatUsageMinutes(Duration.ofMillis(recent.wakeTime - recent.bedtime).toMinutes().toInt()), 26f))
-            if (recent != null) addView(label("${formatTime(recent.bedtime)} – ${formatTime(recent.wakeTime)}" +
-                if (recent.edited) " · Edited" else " · Estimated from phone use", 13f, Theme.muted))
+            if (recent != null) addView(label("${formatTime(recent.bedtime)} – ${formatTime(recent.wakeTime)}" + when {
+                recent.edited -> " · Edited"
+                recent.healthConnect -> " · Health Connect"
+                else -> " · Estimated from phone use"
+            }, 13f, Theme.muted))
             else addView(label("Enter your sleep hours, or try an estimate from phone use.", 13f, Theme.muted))
             addAction(if (recent == null) "Enter sleep" else "Edit sleep") { editNight(owner, habit, day, recent, settings.schedule) }
         })
@@ -507,7 +662,7 @@ class PhoneTrackingActivity : Activity() {
 
     private fun form() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-    private fun LinearLayout.field(caption: String, value: String, number: Boolean = false): EditText {
+    private fun LinearLayout.field(caption: String, value: String, number: Boolean = false, maxLength: Int = if (number) 4 else 80): EditText {
         addView(label(caption, 13f, Theme.muted), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         return EditText(this@PhoneTrackingActivity).apply {
             inputType = if (number) InputType.TYPE_CLASS_NUMBER else InputType.TYPE_CLASS_TEXT
@@ -518,7 +673,7 @@ class PhoneTrackingActivity : Activity() {
             typeface = Theme.regular
             setTextColor(Theme.text)
             applyMonochromeCursor(this)
-            filters = arrayOf(InputFilter.LengthFilter(if (number) 4 else 80))
+            filters = arrayOf(InputFilter.LengthFilter(maxLength))
             background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(8).toFloat(), dp(1))
             setPadding(dp(12), dp(10), dp(12), dp(10))
             minimumHeight = dp(48)

@@ -75,11 +75,15 @@ internal object PhoneTracking {
 
     fun saveSleep(owner: String, settings: SleepTracking?) {
         val editor = Store.prefs.edit()
-        if (settings == null) editor.remove(key(owner, "sleep"))
-        else editor.putString(key(owner, "sleep"), JSONObject()
-            .put("activity", settings.activityId).put("since", settings.since)
-            .put("bedtime", settings.schedule.bedtime.toString()).put("wake", settings.schedule.wakeTime.toString())
-            .toString())
+        if (settings == null) {
+            HealthTracking.saveRule(owner, HealthMetric.Sleep, null)
+            editor.remove(key(owner, "sleep"))
+        } else {
+            editor.putString(key(owner, "sleep"), JSONObject()
+                .put("activity", settings.activityId).put("since", settings.since)
+                .put("bedtime", settings.schedule.bedtime.toString()).put("wake", settings.schedule.wakeTime.toString())
+                .toString())
+        }
         editor.remove(key(owner, "last-check")).apply()
         schedule()
         SleepWidget.refresh(Store.context)
@@ -167,6 +171,7 @@ internal object PhoneTracking {
     }
 
     fun removeActivity(owner: String, id: String) {
+        HealthTracking.removeActivity(owner, id)
         if (sleep(owner)?.activityId == id) saveSleep(owner, null)
         Store.prefs.edit().remove(key(owner, "pending-sleep:$id")).apply()
         saveAppRules(owner, appRules(owner).filterNot { it.activityId == id })
@@ -263,22 +268,25 @@ internal object PhoneTracking {
 
     private fun pending(owner: String, id: String) = json(owner, "pending-sleep:$id")
     private fun pendingSummary(owner: String, id: String, day: String): SleepSummary? =
-        pending(owner, id).optJSONObject(day)?.let { SleepSummary(it.getLong("bed"), it.getLong("wake"), it.optBoolean("edited")) }
+        pending(owner, id).optJSONObject(day)?.let {
+            SleepSummary.parse(it.opt("bed"), it.opt("wake"), it.opt("edited"), it.opt("healthConnect"))
+        }
 
     fun summary(owner: String, habit: Habit?, day: String): SleepSummary? {
         if (habit == null) return null
         val saved = habit.sleepSummaries[day]
         val pending = pendingSummary(owner, habit.id, day)
-        return if (saved?.edited == true && pending?.edited != true) saved else pending ?: saved
+        return pending?.takeIf { saved.canBeReplacedBy(it) } ?: saved
     }
 
     fun saveSummary(owner: String, id: String, day: String, value: SleepSummary) {
         if (Store.trackingOwner() != owner || sleep(owner)?.activityId != id) return
         val habit = Store.habits.find { it.id == id } ?: return
         val previous = summary(owner, habit, day)
-        if (previous == value || (previous?.edited == true && !value.edited)) return
+        if (!previous.canBeReplacedBy(value)) return
         val saved = pending(owner, id).put(day, JSONObject()
-            .put("bed", value.bedtime).put("wake", value.wakeTime).put("edited", value.edited))
+            .put("bed", value.bedtime).put("wake", value.wakeTime).put("edited", value.edited)
+            .put("healthConnect", value.healthConnect))
         if (!Store.prefs.edit().putString(key(owner, "pending-sleep:$id"), saved.toString()).commit()) return
         enqueueLog(owner, id, day)
         syncSummaries(owner, id)

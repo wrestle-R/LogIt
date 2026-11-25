@@ -183,7 +183,20 @@ fun MainActivity.editActivity(habit: Habit? = null) {
 
     lateinit var dialog: PrettyDialog
     if (habit == null) {
-        fields.addView(fieldLabel("Templates & tracking", topDp = 16))
+        fields.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(fieldLabel("Templates & tracking").apply { setPadding(0, 0, 0, 0) },
+                LinearLayout.LayoutParams(0, -2, 1f))
+            addView(quietAction("Health Connect") {
+                dialog.dismiss()
+                openTracking("health")
+            }.apply {
+                setTextColor(Theme.text)
+                setPadding(dp(8), dp(4), dp(4), dp(4))
+                minHeight = dp(44)
+                minimumHeight = dp(44)
+            }, LinearLayout.LayoutParams(-2, -2))
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         val shortcuts = LinearLayout(this)
         val routes = listOf("Sleep" to "sleep", "App use" to "apps", "Screen time" to "limits")
         for ((title, route) in routes) {
