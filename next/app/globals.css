@@ -457,3 +457,19 @@ h3 {
 @media (prefers-reduced-motion: reduce) {
   .log-action.sk-button { transition: none; }
 }
+
+.logit-select {
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+  min-height: 2.5rem;
+  padding: .5rem;
+}
+.logit-stat { border-top: 1px solid var(--border); padding-block: .75rem; }
+.logit-stat h3 { font-weight: 600; }
+.logit-stat p { color: var(--muted-foreground); font-size: .875rem; }
+.logit-bars { display: grid; grid-template-columns: repeat(4, 1fr); align-items: end; gap: .5rem; margin-top: .75rem; }
+.logit-bars > div { text-align: center; font-size: .75rem; }
+.logit-bars > div > div { border-radius: .25rem; margin-top: .25rem; }
+.activities footer .toolbar { flex-wrap: wrap; }

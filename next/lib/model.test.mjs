@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { count, change, total, dayKey, streak } from "./model.mjs";
+import { count, change, total, dayKey, streak, goalProgress, monday, activityStats } from "./model.mjs";
 test("legacy days start at one and repeated logs preserve unique dates", () => {
   const next = change({ completions: ["2026-11-14"] }, "2026-11-14", 1);
   assert.equal(count(next, "2026-11-14"), 2);
@@ -25,4 +25,20 @@ test("IST boundary and duplicate legacy dates", () => {
   assert.equal(dayKey(new Date("2026-11-13T18:29:59Z")), "2026-11-13");
   assert.equal(dayKey(new Date("2026-11-13T18:30:00Z")), "2026-11-14");
   assert.equal(total({ completions: ["2026-11-14", "2026-11-14"] }), 1);
+});
+
+test("three logs in a Monday to Sunday week count even on the same day", () => {
+  const habit = { goal: { period: "weekly", target: 3 }, dailyCounts: { "2026-11-22": 4, "2026-11-23": 3 } };
+  assert.deepEqual(goalProgress(habit, "2026-11-29"), { start: "2026-11-23", logged: 3, target: 3, period: "weekly" });
+  assert.equal(goalProgress(habit, "2026-11-30").logged, 0);
+  assert.equal(monday("2027-01-01"), "2026-12-28");
+});
+
+test("backdated logs and undo update goal and statistics for the original day", () => {
+  const habit = { goal: { period: "daily", target: 2 }, dailyCounts: { "2026-11-25": 1 } };
+  const logged = change(change(habit, "2026-11-24", 1), "2026-11-24", 1);
+  assert.equal(goalProgress(logged, "2026-11-24").logged, 2);
+  assert.equal(activityStats(logged, "2026-11-25").recentDays, 2);
+  assert.equal(activityStats(change(logged, "2026-11-24", -1), "2026-11-25").recentLogs, 2);
+  assert.equal(activityStats({}, "2026-11-25").first, undefined);
 });

@@ -29,8 +29,9 @@ import {
   ArrowLeft,
   ArrowRight,
 } from "lucide-react";
+import { setBrowserReminders } from "@/lib/reminder-browser";
 import { auth, db } from "@/lib/firebase";
-import { count, total, dayKey, change, streak } from "@/lib/model.mjs";
+import { count, total, dayKey, change, streak, shiftDay, monday, goalProgress, activityStats } from "@/lib/model.mjs";
 import { Button } from "@/components/ui/button";
 import { SkeuoButton } from "@/components/ui/skeuo-button";
 import { AndroidDownload } from "@/components/android-download";
@@ -85,7 +86,9 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
+type Goal = { period: "daily" | "weekly"; target: number; since: string };
 type Habit = {
+  goal?: Goal | null;
   logOps?: Record<string, boolean>;
   id: string;
   name: string;
@@ -159,7 +162,8 @@ function Heatmap({
     return () => observer.disconnect();
   }, []);
   const visibleWeeks = Math.min(weeks, capacity);
-  const today = new Date(`${dayKey()}T12:00:00Z`);
+  const today = dayKey();
+  const start = shiftDay(monday(today), -(visibleWeeks - 1) * 7);
   return (
     <div ref={viewport} className="heatmap-fit">
     <div
@@ -169,9 +173,8 @@ function Heatmap({
       aria-label={`${habit.name}, ${visibleWeeks} weeks of history`}
     >
       {Array.from({ length: visibleWeeks * 7 }, (_, i) => {
-        const date = new Date(today);
-        date.setUTCDate(today.getUTCDate() - (visibleWeeks * 7 - 1 - i));
-        const key = date.toISOString().slice(0, 10);
+        const key = shiftDay(start, i);
+        if (key > today) return <span key={key} style={{visibility: "hidden"}} />;
         const n = count(habit, key);
         const color = palette[habit.color || 0];
         return (
@@ -253,6 +256,41 @@ export default function Dashboard() {
     [busy, setBusy] = useState(false),
     [syncError, setSyncError] = useState("");
 
+  const [logDay, setLogDay] = useState("");
+  const [editing, setEditing] = useState<Habit | null>(null);
+  const [period, setPeriod] = useState<"none" | Goal["period"]>("none");
+  const [target, setTarget] = useState("1");
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [remindersOpen, setRemindersOpen] = useState(false);
+  const [remindersOn, setRemindersOn] = useState(false);
+  const [remindersBusy, setRemindersBusy] = useState(false);
+  const [pastLog, setPastLog] = useState(false);
+  const [undoDays, setUndoDays] = useState<Record<string, string[]>>({});
+  const undoKey = demo ? "logit-undo:demo" : user ? "logit-undo:" + user.uid : null;
+  useEffect(() => {
+    try { setUndoDays(undoKey ? JSON.parse(localStorage.getItem(undoKey) || "{}") : {}); }
+    catch { setUndoDays({}); }
+  }, [undoKey]);
+  function rememberUndo(history: Record<string, string[]>) {
+    setUndoDays(history);
+    if (undoKey) {
+      try { localStorage.setItem(undoKey, JSON.stringify(history)); } catch {}
+    }
+  }
+  const validTarget = period === "none" || /^\d+$/.test(target) && Number(target) >= 1 && Number(target) <= 999;
+  function openLog(habit: Habit, past: boolean) {
+    setLogDay(past ? shiftDay(dayKey(), -1) : dayKey());
+    setPastLog(past);
+    setConfirm(habit);
+  }
+  function openGoal(habit: Habit | null) {
+    setEditing(habit);
+    setName(habit?.name || "");
+    setPeriod(habit?.goal?.period || "none");
+    setTarget(String(habit?.goal?.target || 1));
+    setAdding(true);
+  }
+
   const [pending, setPending] = useState<PendingLog[]>([]);
   const habits = useMemo(
     () => (demo ? baseHabits : project(baseHabits, pending)),
@@ -263,10 +301,14 @@ export default function Dashboard() {
       onAuthStateChanged(auth, (u) => {
         setHabits([]);
         setPending([]);
+        setUndoDays({});
         setUser(u);
       }),
     [],
   );
+  useEffect(() => {
+    setRemindersOn(!!user && localStorage.getItem("logit-reminders:" + user.uid) === "on");
+  }, [user]);
   useEffect(() => {
     if (!user) {
       setPending([]);
@@ -401,21 +443,13 @@ export default function Dashboard() {
     if (!confirm || busy) return;
     setBusy(true);
     const h = confirm;
-    const day = dayKey();
+    const day = logDay;
+    if (!day || day > dayKey()) { setBusy(false); return; }
     try {
       await log(h, 1, day);
+      rememberUndo({...undoDays, [h.id]: [...(undoDays[h.id] || []), day]});
       setConfirm(null);
-      toast.success(`Saved ${h.name}`, {
-        duration: 10000,
-        action: {
-          label: "Undo",
-          onClick: () => {
-            void log(h, -1, day)
-              .then(() => toast.success("Log undone"))
-              .catch(error);
-          },
-        },
-      });
+      toast.success(`Saved ${h.name} for ${day === dayKey() ? "today" : day}`);
     } catch (e) {
       error(e);
     } finally {
@@ -423,10 +457,20 @@ export default function Dashboard() {
     }
   }
   async function add() {
-    if (!name.trim() || busy) return;
+    if (!name.trim() || !validTarget || busy) return;
     setBusy(true);
     try {
+      const goal = period === "none" ? null : editing?.goal?.period === period && editing.goal.target === Number(target) ? editing.goal : { period, target: Number(target), since: dayKey() };
+      if (editing) {
+        const id = editing.id;
+        if (demo) setHabits(old => old.map(h => h.id === id ? {...h, goal} : h));
+        else await updateDoc(doc(db, "habits", id), {goal});
+        setAdding(false);
+        if (goal && user && !localStorage.getItem("logit-reminders:" + user.uid)) setRemindersOpen(true);
+        return;
+      }
       const data = {
+        goal,
         name: name.trim(),
         userId: user?.uid || "demo",
         completions: [],
@@ -443,6 +487,7 @@ export default function Dashboard() {
           createdAt: serverTimestamp(),
         });
       setAdding(false);
+      if (goal && user && !localStorage.getItem("logit-reminders:" + user.uid)) setRemindersOpen(true);
       setName("");
     } catch (e) {
       error(e);
@@ -515,7 +560,13 @@ export default function Dashboard() {
                   if (demo) {
                     setDemo(false);
                     setHabits([]);
-                  } else void signOut(auth).catch(error);
+                  } else if (user) void (async () => {
+                    if (remindersOn) {
+                      await setBrowserReminders(user, false);
+                      localStorage.removeItem("logit-reminders:" + user.uid);
+                    }
+                    await signOut(auth);
+                  })().catch(error);
                 }}
               >
                 {demo ? "Leave demo" : "Sign out"}
@@ -563,7 +614,7 @@ export default function Dashboard() {
             </div>
             <Button
               onClick={() => {
-                if (user || demo) setAdding(true);
+                if (user || demo) openGoal(null);
                 else {
                   setAuthError("");
                   setAuthOpen(true);
@@ -576,6 +627,8 @@ export default function Dashboard() {
           </section>
           {(user || demo) && (
             <div className="filters">
+              <Button variant="ghost" onClick={() => setStatsOpen(true)}>View statistics</Button>
+              {user && <Button variant="ghost" onClick={() => setRemindersOpen(true)}>Goal reminders</Button>}
               <Label htmlFor="timeframe">History</Label>
               <Select value={weeks} onValueChange={setWeeks}>
                 <SelectTrigger id="timeframe" className="w-36">
@@ -630,9 +683,13 @@ export default function Dashboard() {
                             <div className="activity-heading">
                               <div>
                                 <h3>{h.name}</h3>
-                                <p>
-                                  {total(h)} total logs · {streak(h)} day streak
-                                </p>
+                                <Button variant="ghost" size="sm" onClick={() => openGoal(h)}>
+                                  {(() => {
+                                    const progress = goalProgress(h, dayKey());
+                                    return progress ? `${progress.logged} of ${progress.target} ${progress.period === "daily" ? "today" : "this week"}` : "Set goal";
+                                  })()}
+                                </Button>
+                                <p>{total(h)} total logs · {streak(h)} day streak</p>
                               </div>
                               <div className="toolbar">
                                 <Badge variant="secondary">
@@ -663,16 +720,20 @@ export default function Dashboard() {
                             </div>
                             <footer>
                               <div className="toolbar">
-                                <Button variant="outline" disabled={busy || total(h) === 0}
+                                <Button variant="ghost" size="sm" onClick={() => openLog(h, true)}>Add for yesterday</Button>
+                                <Button variant="outline" disabled={busy || count(h, undoDays[h.id]?.at(-1) || "") < 1}
                                   onClick={async () => {
-                                    if (busy) return;
+                                    const day = undoDays[h.id]?.at(-1);
+                                    if (!day || busy || count(h, day) < 1) return;
                                     setBusy(true);
-                                    const day = [...new Set([...h.completions, ...Object.keys(h.dailyCounts || {})])]
-                                      .filter(d => count(h, d) > 0).sort().at(-1);
-                                    try { if (day) await log(h, -1, day); } catch (e) { error(e); }
+                                    try {
+                                      await log(h, -1, day);
+                                      rememberUndo({...undoDays, [h.id]: undoDays[h.id].slice(0, -1)});
+                                      toast.success("Log undone");
+                                    } catch (e) { error(e); }
                                     finally { setBusy(false); }
                                   }}>Undo</Button>
-                                <SkeuoButton className="log-action" onClick={() => setConfirm(h)}><Plus /> Log today</SkeuoButton>
+                                <SkeuoButton className="log-action" onClick={() => openLog(h, false)}><Plus /> Log today</SkeuoButton>
                               </div>
                               <Select
                                 value={String(h.color || 0)}
@@ -774,9 +835,9 @@ export default function Dashboard() {
         >
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>New activity</DialogTitle>
+              <DialogTitle>{editing ? `Goal for ${editing.name}` : "New activity"}</DialogTitle>
               <DialogDescription>
-                A name for something you want to keep showing up for.
+                A goal is optional. You can change it anytime.
               </DialogDescription>
             </DialogHeader>
             <form
@@ -785,7 +846,7 @@ export default function Dashboard() {
                 void add();
               }}
             >
-              <Field>
+              {!editing && <Field>
                 <FieldLabel htmlFor="name">Activity name</FieldLabel>
                 <Input
                   autoFocus
@@ -795,7 +856,17 @@ export default function Dashboard() {
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Read, walk, practice…"
                 />
+              </Field>}
+              <Field className="mt-4">
+                <FieldLabel htmlFor="goal-period">Goal</FieldLabel>
+                <select id="goal-period" className="logit-select" value={period} onChange={e => setPeriod(e.target.value as typeof period)}>
+                  <option value="none">No goal</option><option value="daily">Every day</option><option value="weekly">Every week</option>
+                </select>
               </Field>
+              {period !== "none" && <Field className="mt-4">
+                <FieldLabel htmlFor="goal-target">Logs per {period === "daily" ? "day" : "week"}</FieldLabel>
+                <Input id="goal-target" type="number" min={1} max={999} value={target} onChange={e => setTarget(e.target.value)} required />
+              </Field>}
               <DialogFooter>
                 <Button
                   variant="outline"
@@ -805,8 +876,8 @@ export default function Dashboard() {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={busy || !name.trim()}>
-                  {busy ? "Creating…" : "Create activity"}
+                <Button type="submit" disabled={busy || !name.trim() || !validTarget}>
+                  {busy ? "Saving…" : editing ? "Save goal" : "Create activity"}
                 </Button>
               </DialogFooter>
             </form>
@@ -822,9 +893,13 @@ export default function Dashboard() {
             <DialogHeader>
               <DialogTitle>Log {confirm?.name}?</DialogTitle>
               <DialogDescription>
-                Add one completion for today. You can undo it after logging.
+                Add one log for {logDay === dayKey() ? "today" : logDay}. You can undo it afterwards.
               </DialogDescription>
             </DialogHeader>
+            {pastLog && <Field>
+              <FieldLabel htmlFor="log-date">Choose date</FieldLabel>
+              <Input id="log-date" type="date" max={dayKey()} value={logDay} onChange={e => setLogDay(e.target.value)} />
+            </Field>}
             <DialogFooter>
               <Button
                 variant="outline"
@@ -833,9 +908,49 @@ export default function Dashboard() {
               >
                 Cancel
               </Button>
-              <Button disabled={busy} onClick={() => void saveLog()}>
+              <Button disabled={busy || !logDay || logDay > dayKey()} onClick={() => void saveLog()}>
                 {busy ? "Saving…" : "Yes, log it"}
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={statsOpen} onOpenChange={setStatsOpen}>
+          <DialogContent className="max-h-[85dvh] overflow-y-auto">
+            <DialogHeader><DialogTitle>Your statistics</DialogTitle><DialogDescription>How often you showed up in the last 28 days.</DialogDescription></DialogHeader>
+            {habits.length === 0 && <p>Log your first activity to start seeing progress here.</p>}
+            {habits.map(h => {
+              const stats = activityStats(h, dayKey());
+              return <section key={h.id} className="logit-stat">
+                <h3>{h.name}</h3>
+                <p>{stats.first ? `${stats.recentLogs} logs across ${stats.recentDays} days · ${stats.activeDays} active days overall` : "Your first log will show up here."}</p>
+                {stats.first && <div className="logit-bars" aria-label="Logs in four consecutive 7-day periods, oldest first">
+                  {stats.weeks.map((value, i) => <div key={i}><span>{value}</span><div style={{height: `${Math.max(2, 48 * value / Math.max(1, ...stats.weeks))}px`, backgroundColor: palette[h.color || 0]}} /></div>)}
+                </div>}
+              </section>;
+            })}
+          </DialogContent>
+        </Dialog>
+        <Dialog open={remindersOpen} onOpenChange={setRemindersOpen}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Goal reminders</DialogTitle><DialogDescription>
+              Get a heads-up at 8 pm if you're short, and a note at 9 am if a goal slipped by. Weekly reminders arrive on Sunday evening and Monday morning. Times are in India time.
+            </DialogDescription></DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" disabled={remindersBusy} onClick={() => {
+                if (user && !remindersOn) localStorage.setItem("logit-reminders:" + user.uid, "off");
+                setRemindersOpen(false);
+              }}>{remindersOn ? "Close" : "Not now"}</Button>
+              <Button disabled={!user || remindersBusy} onClick={async () => {
+                if (!user) return;
+                setRemindersBusy(true);
+                try {
+                  await setBrowserReminders(user, !remindersOn);
+                  localStorage.setItem("logit-reminders:" + user.uid, remindersOn ? "off" : "on");
+                  setRemindersOn(!remindersOn);
+                  setRemindersOpen(false);
+                  toast.success(remindersOn ? "Reminders are off" : "Reminders are on");
+                } catch (e) { error(e); } finally { setRemindersBusy(false); }
+              }}>{remindersOn ? "Turn off" : "Enable reminders"}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
