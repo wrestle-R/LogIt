@@ -44,7 +44,7 @@ export function AndroidDownload() {
             Log activities from your home screen.
           </DialogDescription>
         </DialogHeader>
-        <Badge variant="secondary">v0.3.4 · APK · Android 8.0+</Badge>
+        <Badge variant="secondary">Latest release · APK · Android 8.0+</Badge>
         <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-muted-foreground">
           <li>Download the APK and open it on your Android phone.</li>
           <li>If prompted, allow your browser to install the app.</li>
