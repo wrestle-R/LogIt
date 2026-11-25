@@ -79,3 +79,10 @@ export function activityStats(habit, today) {
     }),
   };
 }
+
+export function reminderProgress(habit, day) {
+  const progress = goalProgress(habit, day);
+  if (!progress || progress.logged >= progress.target || habit.goal.since > day) return null;
+  if (progress.period === "weekly" && new Date(day + "T00:00:00Z").getUTCDay() !== 0) return null;
+  return progress;
+}

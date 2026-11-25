@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { QuerySnapshot } from "firebase-admin/firestore";
 import { sendNotification } from "web-push";
 import { reminderAdmin, remindersConfigured } from "@/lib/web-reminders";
-import { dayKey, goalProgress, shiftDay } from "@/lib/model.mjs";
+import { dayKey, reminderProgress, shiftDay } from "@/lib/model.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +17,6 @@ export async function GET(request: Request) {
   const missed = hour >= 9 && hour < 12;
   if (!missed && hour < 20) return Response.json({ delivered: 0 });
   const day = shiftDay(dayKey(now), missed ? -1 : 0);
-  const sunday = new Date(day + "T00:00:00Z").getUTCDay() === 0;
   const slot = missed ? "lastMissed" : "lastEvening";
   const { db } = reminderAdmin();
   const subscriptions = await db.collection("logitWebReminders").get();
@@ -32,9 +31,8 @@ export async function GET(request: Request) {
       users.set(uid, habits);
       const incomplete = (await habits).docs.flatMap(h => {
         const habit = h.data();
-        const progress = goalProgress(habit, day);
-        if (!progress || progress.logged >= progress.target || habit.goal.since > day ||
-          progress.period === "weekly" && !sunday) return [];
+        const progress = reminderProgress(habit, day);
+        if (!progress) return [];
         return [String(habit.name || "Activity").slice(0, 80)];
       });
       if (!incomplete.length) continue;
