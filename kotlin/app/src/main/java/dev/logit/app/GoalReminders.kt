@@ -35,19 +35,22 @@ object GoalReminders {
     }
 
     fun settings(activity: Activity) {
-        val enabled = enabled()
-        PrettyDialog.Builder(activity).setTitle("Goal reminders")
-            .setMessage("A heads-up at 8 pm if you're short of a goal, and a note at 9 am if you missed it. Weekly reminders are on Sunday evening and Monday morning. Times are in India time.")
-            .setNegativeButton("Not now") { _, _ -> Store.prefs.edit().putBoolean(key() + ":asked", true).apply() }
-            .setPositiveButton(if (enabled) "Turn off" else "Enable reminders") { _, _ ->
-                if (enabled) setEnabled(activity, false)
-                else if (Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
-                    activity.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), permissionRequest)
-                else if (!activity.getSystemService(NotificationManager::class.java).areNotificationsEnabled())
-                    activity.startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, activity.packageName))
-                else setEnabled(activity, true)
-            }.show()
+        Store.prefs.edit().putBoolean(key() + ":asked", true).apply()
+        activity.startActivity(Intent(activity, DetailsActivity::class.java).putExtra("screen", "reminders"))
     }
+
+    fun time(missed: Boolean): Int = Store.prefs.getInt(key() + ":time:" + missed, if (missed) 540 else 1200)
+    fun setTime(missed: Boolean, minutes: Int) {
+        Store.prefs.edit().putInt(key() + ":time:" + missed, minutes).apply()
+    }
+
+    fun kindEnabled(missed: Boolean): Boolean = Store.prefs.getBoolean(key() + ":kind:" + missed, true)
+    fun setKind(missed: Boolean, value: Boolean) {
+        Store.prefs.edit().putBoolean(key() + ":kind:" + missed, value).apply()
+    }
+
+    fun slots(now: ZonedDateTime): List<Pair<java.time.LocalDate, Boolean>> =
+        listOf(false, true).filter(::kindEnabled).mapNotNull { missed -> reminderSlot(now, time(missed), missed) }
 
     fun setEnabled(context: Context, value: Boolean) {
         if (owner() == null) return
@@ -60,9 +63,10 @@ object GoalReminders {
         if (!enabled()) return
         val manager = context.getSystemService(NotificationManager::class.java)
         if (!manager.areNotificationsEnabled()) return
-        val (day, missed) = reminderDate(now) ?: return
+        val slots = slots(now)
+        if (slots.isEmpty()) return
         manager.createNotificationChannel(NotificationChannel(channel, "Goal reminders", NotificationManager.IMPORTANCE_DEFAULT))
-        for (habit in habits) {
+        for ((day, missed) in slots) for (habit in habits) {
             val goal = habit.goal ?: continue
             if (!habit.needsReminder(day)) continue
             val tag = "$owner:${habit.id}:$day:$missed"
@@ -85,7 +89,7 @@ object GoalReminders {
 class GoalReminderWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
     override fun doWork(): Result {
         if (!GoalReminders.enabled()) return Result.success()
-        if (reminderDate(ZonedDateTime.now(Dates.zone)) == null) return Result.success()
+        if (GoalReminders.slots(ZonedDateTime.now(Dates.zone)).isEmpty()) return Result.success()
         if (Store.signedIn && !Store.demo) {
             // Refresh cross-device logs before deciding a goal was missed.
             val user = Store.auth.currentUser?.uid ?: return Result.success()

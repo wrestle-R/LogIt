@@ -142,11 +142,11 @@ class MainActivity : Activity() {
             },
             LinearLayout.LayoutParams(dp(80), dp(48)),
         )
-        header.addView(
-                icon(if (AppUpdates.cachedUpdate(this)) "↑" else "⋯",
-                    if (AppUpdates.cachedUpdate(this)) "More options, update available" else "More options") { settings() },
-                LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(8) },
-            )
+        val updateAvailable = AppUpdates.cachedUpdate(this)
+        val more = icon(if (updateAvailable) "↑" else "⋯",
+            if (updateAvailable) "More options, update available" else "More options") {}
+        more.setOnClickListener { settings(more) }
+        header.addView(more, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(8) })
         root.addView(header)
         if (!Store.ready) {
             root.addView(loginView(authBusy, authError) { signIn() })
@@ -406,38 +406,43 @@ class MainActivity : Activity() {
 
     private fun add() = editActivity()
 
-    private fun settings() {
-        val options = if (Store.ready) arrayOf("Check for updates", "View statistics", "Goal reminders", "Add a widget", "Sign out")
-            else arrayOf("Check for updates")
-        PrettyDialog.Builder(this, dialogTheme())
-            .setTitle("More options")
-            .setItems(options) { _, n ->
-                when (n) {
-                0 -> AppUpdates.show(this)
-                1 -> showStatistics()
-                2 -> GoalReminders.settings(this)
-                3 -> {
-                    PrettyDialog.Builder(this)
-                        .setTitle("Add a widget")
-                        .setItems(arrayOf("Quick log", "Heatmap", "Heatmap + log")) { _, kind ->
-                            startActivity(
-                                Intent(this, WidgetConfigActivity::class.java)
-                                    .putExtra("pinKind", arrayOf("quick", "graph", "log")[kind])
-                            )
-                        }
-                        .setNegativeButton("Cancel", null)
-                        .show()
-                }
-                4 -> {
-                    if (Store.demo) Store.leaveDemo() else Store.auth.signOut()
-                    GoalReminders.schedule(this)
-                    render()
-                }
-                }
-            }
-            .setNegativeButton("Close", null)
-            .show()
+    private fun settings(anchor: View) {
+        val menu = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(6), dp(4), dp(6), dp(4))
+        }
+        val popup = PopupWindow(menu, dp(208), ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
+            setBackgroundDrawable(Theme.shape(Theme.card, dp(12).toFloat()))
+            elevation = dp(10).toFloat()
+            isOutsideTouchable = true
+        }
+        fun option(title: String, action: () -> Unit) {
+            menu.addView(quietAction(title) {
+                popup.dismiss()
+                action()
+            }.apply {
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                setPadding(dp(12), 0, dp(8), 0)
+                setTextColor(Theme.text)
+                textSize = 14f
+            }, LinearLayout.LayoutParams(-1, dp(44)))
+        }
+        if (Store.ready) {
+            option("Statistics") { openDetails("statistics") }
+            option("Goal reminders") { openDetails("reminders") }
+            option("Add a widget") { openDetails("widgets") }
+        }
+        option("Check for updates") { AppUpdates.show(this) }
+        if (Store.ready) option("Sign out") {
+            if (Store.demo) Store.leaveDemo() else Store.auth.signOut()
+            GoalReminders.schedule(this)
+            render()
+        }
+        popup.showAsDropDown(anchor, 0, dp(4), Gravity.END)
     }
+
+    private fun openDetails(screen: String) =
+        startActivity(Intent(this, DetailsActivity::class.java).putExtra("screen", screen))
 
     @Suppress("DEPRECATION")
     private fun signIn() {

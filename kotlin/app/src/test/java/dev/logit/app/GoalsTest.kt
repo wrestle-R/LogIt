@@ -25,7 +25,7 @@ class GoalsTest {
 
     @Test fun mondayMorningChecksTheWeekThatJustEnded() {
         val now = java.time.ZonedDateTime.parse("2026-11-30T09:05:00+05:30[Asia/Kolkata]")
-        val (day, missed) = reminderDate(now)!!
+        val (day, missed) = reminderSlot(now, 540, true)!!
         val habit = Habit("read", "Read", counts = mapOf("2026-11-23" to 2),
             goal = Goal("weekly", 3, "2026-11-23"))
         assertTrue(missed)
@@ -34,7 +34,10 @@ class GoalsTest {
         assertFalse(OfflineLogQueue.delta(habit, "2026-11-24", 1).needsReminder(day))
         assertFalse(habit.needsReminder(day.minusDays(1)))
         assertFalse(habit.copy(goal = Goal("weekly", 3, "2026-11-30")).needsReminder(day))
-        assertNull(reminderDate(now.minusHours(1)))
+        assertNull(reminderSlot(now.minusHours(1), 540, true))
+        assertNull(reminderSlot(now, 600, true))
+        assertEquals(LocalDate.parse("2026-11-29") to true, reminderSlot(now.plusHours(1), 600, true))
+        assertEquals(LocalDate.parse("2026-11-30") to false, reminderSlot(now.plusHours(10), 1140, false))
     }
 
     @Test fun releaseComparisonRejectsPrereleasesAndDowngrades() {
