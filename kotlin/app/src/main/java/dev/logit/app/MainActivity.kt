@@ -253,7 +253,7 @@ class MainActivity : Activity() {
                                 if (Theme.light()) 0xffe4e4e7.toInt() else 0xff2e2e32.toInt(),
                             )
                         }
-                    setPadding(dp(14), dp(12), dp(14), dp(12))
+                    setPadding(dp(14), dp(8), dp(14), dp(8))
                     tag = h.id
                 }
             val top = row()
@@ -265,6 +265,7 @@ class MainActivity : Activity() {
                             setTypeface(null, 1)
                             maxLines = 1
                             ellipsize = android.text.TextUtils.TruncateAt.END
+                            setPadding(0, 0, 0, 0)
                         }
                     )
                 }
@@ -307,10 +308,10 @@ class MainActivity : Activity() {
             titles.addView(quietAction(goalLabel ?: "Set goal") { editActivity(h) }.apply {
                 gravity = Gravity.CENTER_VERTICAL or Gravity.START
                 setPadding(0, 0, dp(8), 0)
-                minHeight = 0
-                minimumHeight = 0
+                minHeight = dp(32)
+                minimumHeight = dp(32)
                 contentDescription = if (goalLabel == null) "Set goal for ${h.name}" else "$goalLabel. Edit goal for ${h.name}"
-            }, LinearLayout.LayoutParams(-2, dp(36)))
+            }, LinearLayout.LayoutParams(-2, -2))
             card.setOnDragListener { _, event ->
                 when (event.action) {
                     DragEvent.ACTION_DRAG_STARTED -> event.clipDescription?.label == "habit"
@@ -336,18 +337,12 @@ class MainActivity : Activity() {
                     else -> true
                 }
             }
-            val plot = FrameLayout(this)
-            plot.addView(
+            card.addView(
                 HeatmapView(this, h, historyWeeks).apply {
                     contentDescription = "${h.name} history, latest weeks that fit"
                 },
-                FrameLayout.LayoutParams(-1, -1),
-            )
-            card.addView(
-                plot,
-                LinearLayout.LayoutParams(-1, dp(116)).apply {
-                    topMargin = dp(4)
-                    bottomMargin = dp(8)
+                LinearLayout.LayoutParams(-1, dp(84)).apply {
+                    bottomMargin = dp(4)
                 },
             )
             val actions = row()
@@ -358,7 +353,7 @@ class MainActivity : Activity() {
                     textSize = 12f
                     contentDescription = "Add ${h.name} for yesterday"
                 },
-                LinearLayout.LayoutParams(0, -2, 1f),
+                LinearLayout.LayoutParams(0, dp(44), 1f),
             )
             actions.addView(
                 button("+ Log today") {
@@ -374,7 +369,7 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(-2, dp(44)),
             )
             card.addView(actions)
-            root.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+            root.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
         }
         if (Store.habits.size > 4) {
             val nav = row()

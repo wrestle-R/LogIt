@@ -9,20 +9,22 @@ import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
 import android.view.View
 import android.widget.*
+import java.text.NumberFormat
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 class DetailsActivity : Activity() {
     private var range = 28
-    private var activityIndex = 0
+    private var selectedHabitId: String? = null
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         range = state?.getInt("range", 28) ?: 28
-        activityIndex = state?.getInt("activityIndex") ?: 0
+        selectedHabitId = state?.getString("selectedHabitId")
     }
 
     override fun onResume() {
@@ -32,7 +34,7 @@ class DetailsActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putInt("range", range)
-        outState.putInt("activityIndex", activityIndex)
+        outState.putString("selectedHabitId", selectedHabitId)
         super.onSaveInstanceState(outState)
     }
 
@@ -68,7 +70,7 @@ class DetailsActivity : Activity() {
             insets
         }
         root.addView(quietAction("‹  Back") { finish() }, LinearLayout.LayoutParams(-2, dp(44)))
-        val title = when (screen) { "reminders" -> "Goal reminders"; "widgets" -> "Add a widget"; else -> "Your statistics" }
+        val title = when (screen) { "reminders" -> "Goal reminders"; "widgets" -> "Add a widget"; else -> "Statistics" }
         root.addView(label(title, 27f).apply { setTypeface(null, Typeface.BOLD) })
         when (screen) {
             "reminders" -> reminderControls(root)
@@ -124,48 +126,103 @@ class DetailsActivity : Activity() {
     }
 
     private fun statistics(root: LinearLayout) {
-        val options = listOf(7, 28, 84)
         val habits = Store.habits
-        val choices = ChoiceView(this, (listOf("All activities") + habits.map { it.name }).toTypedArray(), activityIndex.coerceIn(0, habits.size))
-        choices.onChange = { activityIndex = choices.selectedItemPosition; render() }
-        root.addView(choices, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(12) })
-        val periods = ChoiceView(this, options.map { "Last $it days" }.toTypedArray(), options.indexOf(range))
-        periods.onChange = { range = options[periods.selectedItemPosition]; render() }
-        root.addView(periods, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(8); bottomMargin = dp(12) })
-        val selected = if (activityIndex == 0) habits else listOfNotNull(habits.getOrNull(activityIndex - 1))
-        val today = LocalDate.parse(Dates.today())
-        val counts = (range - 1 downTo 0).map { offset ->
-            selected.sumOf { it.count(today.minusDays(offset.toLong()).toString()) }
+        val selected = habits.firstOrNull { it.id == selectedHabitId }
+        val selectedIndex = selected?.let { habits.indexOf(it) + 1 } ?: 0
+        val choices = ChoiceView(this, (listOf("All activities") + habits.map { it.name }).toTypedArray(), selectedIndex)
+        choices.onChange = {
+            selectedHabitId = habits.getOrNull(choices.selectedItemPosition - 1)?.id
+            render()
         }
-        val panel = panel()
-        panel.addView(label("Activity over time", 16f).apply { setTypeface(null, Typeface.BOLD) })
-        panel.addView(label("${counts.sum()} logs  ·  ${counts.count { it > 0 }} / $range active days", 15f, Theme.muted))
-        if (counts.none { it > 0 }) panel.addView(label("Your next log will show up here.", 14f, Theme.muted))
-        else {
-            val bars = if (range == 7) counts else counts.chunked(7).map { it.sum() }
-            val chart = LinearLayout(this).apply {
-                gravity = android.view.Gravity.BOTTOM
-                contentDescription = "Logs by ${if (range == 7) "day" else "week"}, oldest first: ${bars.joinToString()}"
+        root.addView(choices, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(8) })
+        root.addView(LinearLayout(this).apply {
+            for (days in listOf(7, 28, 84)) {
+                addView(quietAction("$days days") {
+                    if (range != days) {
+                        range = days
+                        render()
+                    }
+                }.apply {
+                    setPadding(dp(4), 0, dp(4), 0)
+                    minHeight = dp(44)
+                    minimumHeight = dp(44)
+                    isSelected = range == days
+                    if (isSelected) {
+                        setTextColor(Theme.bg)
+                        background = Theme.shape(Theme.text, dp(8).toFloat())
+                    }
+                }, LinearLayout.LayoutParams(0, -2, 1f))
             }
-            for (value in bars) chart.addView(View(this).apply {
-                val color = selected.singleOrNull()?.color ?: 0
-                background = Theme.shape(if (value == 0L) Theme.muted else Theme.colors[color.coerceIn(0, 9)], dp(3).toFloat())
-            }, LinearLayout.LayoutParams(0, dp(maxOf(3, (92 * value / bars.max()).toInt())), 1f).apply { marginEnd = dp(4) })
-            panel.addView(chart, LinearLayout.LayoutParams(-1, dp(110)))
-            val dates = DateTimeFormatter.ofPattern("d MMM")
-            panel.addView(LinearLayout(this).apply {
-                addView(label(today.minusDays((range - 1).toLong()).format(dates), 12f, Theme.muted), LinearLayout.LayoutParams(0, -2, 1f))
-                addView(label(today.format(dates), 12f, Theme.muted))
-            })
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4); bottomMargin = dp(10) })
+
+        val today = LocalDate.parse(Dates.today())
+        val dates = List(range) { today.minusDays((range - 1 - it).toLong()) }
+        val keys = dates.map(LocalDate::toString)
+        val dailyCounts = (selected?.let(::listOf) ?: habits).map { habit -> keys.map(habit::count) }
+        val totals = dates.indices.map { day -> dailyCounts.sumOf { it[day] } }
+        val numbers = NumberFormat.getIntegerInstance()
+        val dateFormat = DateTimeFormatter.ofPattern("d MMM")
+        val summary = panel()
+        summary.addView(label("${dates.first().format(dateFormat)} – ${today.format(dateFormat)}", 13f, Theme.muted))
+        val total = totals.sum()
+        val activeDays = totals.count { it > 0 }
+        summary.addView(label("${numbers.format(total)} ${if (total == 1L) "log" else "logs"}", 24f).apply {
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 0, 0)
+        })
+        summary.addView(label("$activeDays of $range days with a log", 14f, Theme.muted))
+        if (total == 0L) {
+            summary.addView(label("No logs in this period.", 14f, Theme.muted))
+        } else {
+            val bucketSize = if (range == 7) 1 else 7
+            val values = totals.chunked(bucketSize) { it.sum() }
+            summary.addView(label(if (bucketSize == 1) "Logs per day" else "Logs per week", 13f).apply {
+                setTypeface(null, Typeface.BOLD)
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+            val color = selected?.let { Theme.colors[it.color.coerceIn(Theme.colors.indices)] } ?: Theme.text
+            summary.addView(StatisticsChart(this, dates, values, bucketSize, color), LinearLayout.LayoutParams(-1, dp(106)))
         }
-        root.addView(panel)
-        for (habit in selected) {
-            val recent = (0 until range).sumOf { habit.count(today.minusDays(it.toLong()).toString()) }
+        root.addView(summary)
+        if (selected == null && habits.isNotEmpty()) {
+            root.addView(label("By activity", 16f).apply { setTypeface(null, Typeface.BOLD) },
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
             root.addView(panel().apply {
-                addView(label(habit.name, 16f).apply { setTypeface(null, Typeface.BOLD) })
-                addView(label("$recent in this period  ·  ${habit.total()} all time", 13f, Theme.muted))
-                habit.goalLabel(today)?.let { addView(label(it, 13f, Theme.muted)) }
-            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+                setPadding(dp(12), dp(6), dp(12), dp(4))
+                addView(statisticsRow("Activity", "$range days", "All time", header = true))
+                habits.forEachIndexed { index, habit ->
+                    addView(View(this@DetailsActivity).apply { setBackgroundColor(Theme.divider) }, LinearLayout.LayoutParams(-1, dp(1)))
+                    val periodCount = numbers.format(dailyCounts[index].sum())
+                    val allTime = numbers.format(habit.total())
+                    addView(statisticsRow(habit.name, periodCount, allTime).apply {
+                        contentDescription = "${habit.name}, $periodCount logs in $range days, $allTime all time"
+                        isFocusable = true
+                        setOnClickListener {
+                            selectedHabitId = habit.id
+                            render()
+                        }
+                    })
+                }
+            })
+        } else if (selected != null) {
+            root.addView(label("All time: ${numbers.format(selected.total())} logs", 14f),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+            selected.goalLabel(today)?.let { root.addView(label("Goal: $it", 14f, Theme.muted)) }
         }
     }
+
+    private fun statisticsRow(name: String, period: String, allTime: String, header: Boolean = false) =
+        LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(if (header) 36 else 48)
+            val color = if (header) Theme.muted else Theme.text
+            addView(label(name, if (header) 12f else 14f, color).apply {
+                if (!header) setTypeface(null, Typeface.BOLD)
+                setPadding(0, dp(4), dp(8), dp(4))
+            }, LinearLayout.LayoutParams(0, -2, 2f))
+            for (value in listOf(period, allTime)) {
+                addView(label(value, if (header) 12f else 14f, color).apply {
+                    gravity = Gravity.END
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+            }
+        }
 }
