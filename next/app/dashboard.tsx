@@ -435,7 +435,9 @@ export default function Dashboard() {
     await runTransaction(db, async (tx) => {
       const ref = doc(db, "habits", op.habit);
       const snap = await tx.get(ref);
-      if (!snap.exists()) throw new Error("Activity no longer exists");
+      if (auth.currentUser?.uid !== op.owner)
+        throw new Error("Sign in to sync this queue");
+      if (!snap.exists()) return;
       const current = { ...snap.data(), id: op.habit } as Habit;
       if (current.userId !== op.owner)
         throw new Error("Activity belongs to another account");
