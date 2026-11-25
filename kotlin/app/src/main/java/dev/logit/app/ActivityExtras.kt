@@ -185,34 +185,23 @@ fun MainActivity.editActivity(habit: Habit? = null) {
     if (habit == null) {
         fields.addView(fieldLabel("Templates & tracking", topDp = 16))
         val shortcuts = LinearLayout(this)
-        val routes = listOf(
-            Triple("Sleep", "sleep", R.drawable.ic_sleep),
-            Triple("App use", "apps", R.drawable.ic_app_use),
-            Triple("Screen time", "limits", R.drawable.ic_screen_time),
-        )
-        for ((title, route, icon) in routes) {
+        val routes = listOf("Sleep" to "sleep", "App use" to "apps", "Screen time" to "limits")
+        for ((title, route) in routes) {
             val shortcut = quietAction(title) {
                 dialog.dismiss()
                 openTracking(route)
             }.apply {
                 setTextColor(Theme.text)
                 gravity = Gravity.CENTER
-                setPadding(dp(4), dp(9), dp(4), dp(8))
-                minHeight = dp(60)
-                minimumHeight = dp(60)
-                minLines = 1
+                setPadding(dp(4), dp(6), dp(4), dp(6))
+                minHeight = dp(44)
+                minimumHeight = dp(44)
                 maxLines = 2
                 background = RippleDrawable(
                     ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
                     Theme.shape(Theme.track, dp(9).toFloat()),
                     null,
                 )
-                val glyph = getDrawable(icon)?.mutate()?.apply {
-                    setTint(Theme.muted)
-                    setBounds(0, 0, dp(18), dp(18))
-                }
-                compoundDrawablePadding = dp(5)
-                setCompoundDrawablesRelative(null, glyph, null, null)
             }
             shortcuts.addView(shortcut, LinearLayout.LayoutParams(0, -1, 1f).apply {
                 if (shortcuts.childCount > 0) marginStart = dp(6)
