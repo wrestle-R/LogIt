@@ -75,17 +75,16 @@ object Theme {
         light: Boolean = light(),
         gradient: Boolean = false,
         center: Boolean = false,
-        fitHeight: Boolean = false,
+        gapDp: Int = 3,
     ): Bitmap {
         val density = Store.context.resources.displayMetrics.density
-        val w = width.coerceIn(80, 1600)
-        val hh = height.coerceIn(60, 700)
+        val w = width.coerceIn(1, 1600)
+        val hh = height.coerceIn(1, 700)
         val bitmap = Bitmap.createBitmap(w, hh, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        val cell = 14f * density
-        val gap = 3f * density
-        val cellHeight = if (fitHeight) minOf(cell, (height - 6 * gap).coerceAtLeast(0f) / 7) else cell
+        val gap = minOf(gapDp * density, hh / 13f)
+        val cell = minOf(14f * density, w.toFloat(), (hh - 6 * gap) / 7)
         val radius = 2f * density
         val visibleWeeks = minOf(weeks, maxOf(1, ((w + gap) / (cell + gap)).toInt()))
         val today = LocalDate.parse(Dates.today())
@@ -117,8 +116,8 @@ object Theme {
             val x =
                 i / 7 * (cell + gap) +
                     if (center) (w - (visibleWeeks * (cell + gap) - gap)) / 2 else 0f
-            val y = i % 7 * (cellHeight + gap)
-            canvas.drawRoundRect(x, y, x + cell, y + cellHeight, radius, radius, paint)
+            val y = i % 7 * (cell + gap)
+            canvas.drawRoundRect(x, y, x + cell, y + cell, radius, radius, paint)
         }
         return bitmap
     }
@@ -159,7 +158,7 @@ class HeatmapView(
     private var bitmap: Bitmap? = null
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        bitmap = Theme.graph(habit, weeks, w, h, fitHeight = true)
+        bitmap = Theme.graph(habit, weeks, w, h, gapDp = 2)
     }
 
     override fun onDraw(canvas: Canvas) {

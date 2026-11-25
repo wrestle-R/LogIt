@@ -257,35 +257,20 @@ class MainActivity : Activity() {
                     tag = h.id
                 }
             val top = row()
-            val titles =
-                LinearLayout(this).apply {
-                    orientation = 1
-                    addView(
-                        label(h.name, 19f).apply {
-                            setTypeface(null, 1)
-                            maxLines = 1
-                            ellipsize = android.text.TextUtils.TruncateAt.END
-                            setPadding(0, 0, 0, 0)
-                        }
-                    )
-                }
-            top.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
             top.addView(
-                icon("●", "Colour for ${h.name}") {
-                        PrettyDialog.Builder(this, dialogTheme())
-                            .setTitle("Activity colour")
-                            .setSingleChoiceItems(Theme.names, h.color) { d, n ->
-                                Store.color(h.id, n)
-                                d.dismiss()
-                            }
-                            .setNegativeButton("Cancel", null)
-                            .show()
-                    }
-                    .apply {
-                        setTextColor(Theme.colors[h.color.coerceIn(0, 9)])
-                        textSize = 18f
-                    },
-                LinearLayout.LayoutParams(dp(40), dp(44)),
+                label(h.name, 19f).apply {
+                    setTypeface(null, 1)
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(0, 0, 0, 0)
+                },
+                LinearLayout.LayoutParams(0, -2, 1f),
+            )
+            top.addView(
+                icon("⋯", "Options for ${h.name}") { activityOptions(h) }.apply {
+                    tooltipText = "Activity options"
+                },
+                LinearLayout.LayoutParams(dp(44), dp(44)),
             )
             val grip =
                 label("⠿", 24f, Theme.muted).apply {
@@ -304,14 +289,6 @@ class MainActivity : Activity() {
                 }
             top.addView(grip, LinearLayout.LayoutParams(dp(36), dp(44)))
             card.addView(top)
-            val goalLabel = h.goalLabel(java.time.LocalDate.parse(Dates.today()))
-            titles.addView(quietAction(goalLabel ?: "Set goal") { editActivity(h) }.apply {
-                gravity = Gravity.CENTER_VERTICAL or Gravity.START
-                setPadding(0, 0, dp(8), 0)
-                minHeight = dp(32)
-                minimumHeight = dp(32)
-                contentDescription = if (goalLabel == null) "Set goal for ${h.name}" else "$goalLabel. Edit goal for ${h.name}"
-            }, LinearLayout.LayoutParams(-2, -2))
             card.setOnDragListener { _, event ->
                 when (event.action) {
                     DragEvent.ACTION_DRAG_STARTED -> event.clipDescription?.label == "habit"
@@ -341,8 +318,8 @@ class MainActivity : Activity() {
                 HeatmapView(this, h, historyWeeks).apply {
                     contentDescription = "${h.name} history, latest weeks that fit"
                 },
-                LinearLayout.LayoutParams(-1, dp(84)).apply {
-                    bottomMargin = dp(4)
+                LinearLayout.LayoutParams(-1, dp(96)).apply {
+                    bottomMargin = dp(2)
                 },
             )
             val actions = row()
@@ -356,14 +333,25 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(0, dp(44), 1f),
             )
             actions.addView(
-                button("+ Log today") {
+                quietAction("+ Log today") {
                         Store.log(h.id, 1) { error -> if (error != null) toast(error) }
                     }
                     .apply {
                         textSize = 13f
-                        setPadding(dp(16), 0, dp(16), 0)
-                        background = Theme.shape(Theme.text, dp(10).toFloat())
-                        stateListAnimator = null
+                        setTextColor(Theme.text)
+                        setPadding(dp(12), 0, dp(12), 0)
+                        minHeight = dp(44)
+                        minimumHeight = dp(44)
+                        val pill = Theme.shape(Theme.bg, dp(16).toFloat()).apply {
+                            setStroke(dp(1), Theme.divider)
+                        }
+                        val ripple = android.graphics.drawable.RippleDrawable(
+                            android.content.res.ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
+                            pill,
+                            null,
+                        )
+                        background = android.graphics.drawable.InsetDrawable(ripple, 0, dp(7), 0, dp(7))
+                        setPadding(dp(12), 0, dp(12), 0)
                         contentDescription = "Log ${h.name} for today"
                     },
                 LinearLayout.LayoutParams(-2, dp(44)),
@@ -397,6 +385,26 @@ class MainActivity : Activity() {
             )
             root.addView(nav)
         }
+    }
+
+    private fun activityOptions(habit: Habit) {
+        val actions = arrayOf("Edit goal", "Activity colour")
+        PrettyDialog.Builder(this)
+            .setTitle(habit.name)
+            .setItems(actions) { dialog, index ->
+                dialog.dismiss()
+                if (index == 0) editActivity(habit)
+                else PrettyDialog.Builder(this, dialogTheme())
+                    .setTitle("Activity colour")
+                    .setSingleChoiceItems(Theme.names, habit.color) { colours, colour ->
+                        Store.color(habit.id, colour)
+                        colours.dismiss()
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun add() = editActivity()
