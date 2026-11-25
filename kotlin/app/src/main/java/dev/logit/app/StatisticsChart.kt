@@ -3,6 +3,7 @@ package dev.logit.app
 import android.app.Activity
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.util.TypedValue
 import android.view.View
 import java.text.NumberFormat
@@ -10,14 +11,17 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.math.ceil
 
+internal data class StatisticsSeries(val name: String, val values: List<Long>, val color: Int)
+
 internal class StatisticsChart(
     private val activity: Activity,
     private val dates: List<LocalDate>,
-    private val values: List<Long>,
+    private val series: List<StatisticsSeries>,
     private val daysPerBar: Int,
-    private val barColor: Int,
 ) : View(activity) {
+    private val values = dates.chunked(daysPerBar).indices.map { index -> series.sumOf { it.values[index] } }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val barPath = Path()
     private val numbers = NumberFormat.getIntegerInstance()
     private val dateFormat = DateTimeFormatter.ofPattern("d MMM")
     private val axisDates = if (daysPerBar == 1) DateTimeFormatter.ofPattern("EEE") else dateFormat
@@ -32,7 +36,8 @@ internal class StatisticsChart(
             val start = dates[index * daysPerBar].format(dateFormat)
             val end = dates[(index + 1) * daysPerBar - 1].format(dateFormat)
             val period = if (daysPerBar == 1) start else "$start to $end"
-            "$period: ${numbers.format(count)} ${if (count == 1L) "log" else "logs"}"
+            val activities = series.joinToString(", ") { "${it.name} ${numbers.format(it.values[index])}" }
+            "$period: ${numbers.format(count)} ${if (count == 1L) "log" else "logs"}. $activities"
         }.joinToString("; ")
     }
 
@@ -60,12 +65,31 @@ internal class StatisticsChart(
 
         val slot = (axisRight - axisLeft) / values.size
         val barWidth = minOf(slot * .68f, activity.dp(36).toFloat())
-        paint.color = barColor
+        val topCorner = 2.5f * density
         values.forEachIndexed { index, value ->
             if (value > 0) {
                 val left = axisLeft + slot * index + (slot - barWidth) / 2
-                val barTop = minOf(y(value), baseline - density)
-                canvas.drawRoundRect(left, barTop, left + barWidth, baseline, 2 * density, 2 * density, paint)
+                var cumulative = 0L
+                val lastPositive = series.indexOfLast { it.values[index] > 0 }
+                series.forEachIndexed { sIdx, activitySeries ->
+                    val count = activitySeries.values[index]
+                    if (count == 0L) return@forEachIndexed
+                    val bottom = y(cumulative)
+                    cumulative += count
+                    val segTop = y(cumulative)
+                    paint.color = activitySeries.color
+                    if (sIdx == lastPositive && bottom - segTop >= topCorner) {
+                        barPath.reset()
+                        barPath.addRoundRect(
+                            left, segTop, left + barWidth, bottom,
+                            floatArrayOf(topCorner, topCorner, topCorner, topCorner, 0f, 0f, 0f, 0f),
+                            Path.Direction.CW,
+                        )
+                        canvas.drawPath(barPath, paint)
+                    } else {
+                        canvas.drawRect(left, segTop, left + barWidth, bottom, paint)
+                    }
+                }
             }
         }
 

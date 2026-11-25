@@ -2,6 +2,8 @@ package dev.logit.app
 
 import android.app.*
 import android.content.*
+import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.view.*
 import android.widget.*
@@ -67,10 +69,6 @@ class MainActivity : Activity() {
         Toast.makeText(this, s, Toast.LENGTH_LONG).show()
     }
 
-    private fun dialogTheme() =
-        if (Theme.light()) android.R.style.Theme_Material_Light_Dialog_Alert
-        else android.R.style.Theme_Material_Dialog_Alert
-
     fun render() {
         window.statusBarColor = Theme.bg
         window.navigationBarColor = Theme.bg
@@ -106,9 +104,11 @@ class MainActivity : Activity() {
             insets
         }
         fun row() = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        fun icon(text: String, description: String, action: () -> Unit) =
+        fun icon(text: String, description: String, bordered: Boolean = false, action: () -> Unit) =
             button(text, action).apply {
-                background = Theme.shape(Theme.card, dp(24).toFloat())
+                background =
+                    if (bordered) Theme.bordered(Theme.card, Theme.controlBorder, dp(22).toFloat(), dp(1))
+                    else Theme.shape(Theme.card, dp(24).toFloat())
                 setTextColor(Theme.text)
                 textSize = 20f
                 stateListAnimator = null
@@ -144,7 +144,7 @@ class MainActivity : Activity() {
         )
         val updateAvailable = AppUpdates.cachedUpdate(this)
         val more = icon(if (updateAvailable) "↑" else "⋯",
-            if (updateAvailable) "More options, update available" else "More options") {}
+            if (updateAvailable) "More options, update available" else "More options", bordered = true) {}
         more.setOnClickListener { settings(more) }
         header.addView(more, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(8) })
         root.addView(header)
@@ -209,13 +209,7 @@ class MainActivity : Activity() {
                 .apply {
                     textSize = 13f
                     setPadding(dp(12), 0, dp(12), 0)
-                    background =
-                        Theme.shape(Theme.card, dp(10).toFloat()).apply {
-                            setStroke(
-                                dp(1),
-                                if (Theme.light()) 0xffd4d4d8.toInt() else 0xff3f3f46.toInt(),
-                            )
-                        }
+                    background = Theme.bordered(Theme.card, Theme.controlBorder, dp(10).toFloat(), dp(1))
                     setTextColor(Theme.text)
                     stateListAnimator = null
                     isEnabled = last != null
@@ -234,8 +228,22 @@ class MainActivity : Activity() {
                     Theme.muted,
                 )
             )
-        if (Store.habits.isEmpty())
-            root.addView(label("A clean slate. Add your first activity.", 15f, Theme.muted))
+        if (Store.habits.isEmpty()) {
+            val emptyCard = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = Theme.bordered(Theme.card, Theme.cardBorder, dp(12).toFloat(), dp(1))
+                setPadding(dp(16), dp(18), dp(16), dp(18))
+                addView(label("No activities yet", 17f).apply { setTypeface(null, Typeface.BOLD) })
+                addView(label("Add an activity to start tracking daily completions.", 13f, Theme.muted))
+                addView(button("+ Add activity") { add() }.apply {
+                    textSize = 13f
+                    stateListAnimator = null
+                    background = Theme.shape(Theme.text, dp(10).toFloat())
+                    setPadding(dp(16), 0, dp(16), 0)
+                }, LinearLayout.LayoutParams(-2, dp(42)).apply { topMargin = dp(10) })
+            }
+            root.addView(emptyCard, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        }
         focus?.let { id ->
             val at = Store.habits.indexOfFirst { it.id == id }
             if (at >= 0) page = at / 4
@@ -246,14 +254,8 @@ class MainActivity : Activity() {
             val card =
                 LinearLayout(this).apply {
                     orientation = 1
-                    background =
-                        Theme.shape(Theme.card, dp(12).toFloat()).apply {
-                            setStroke(
-                                dp(1),
-                                if (Theme.light()) 0xffe4e4e7.toInt() else 0xff2e2e32.toInt(),
-                            )
-                        }
-                    setPadding(dp(14), dp(8), dp(14), dp(8))
+                    background = Theme.bordered(Theme.card, Theme.cardBorder, dp(12).toFloat(), dp(1))
+                    setPadding(dp(12), dp(6), dp(12), dp(6))
                     tag = h.id
                 }
             val top = row()
@@ -268,6 +270,10 @@ class MainActivity : Activity() {
             )
             top.addView(
                 icon("⋯", "Options for ${h.name}") { activityOptions(h) }.apply {
+                    val pill = Theme.bordered(Theme.track, Theme.cardBorder, dp(10).toFloat(), dp(1))
+                    background = android.graphics.drawable.InsetDrawable(pill, dp(4), dp(6), dp(4), dp(6))
+                    setTextColor(Theme.muted)
+                    textSize = 18f
                     tooltipText = "Activity options"
                 },
                 LinearLayout.LayoutParams(dp(44), dp(44)),
@@ -316,9 +322,9 @@ class MainActivity : Activity() {
             }
             card.addView(
                 HeatmapView(this, h, historyWeeks).apply {
-                    contentDescription = "${h.name} history, latest weeks that fit"
+                    contentDescription = "${h.name} history, last $historyWeeks weeks"
                 },
-                LinearLayout.LayoutParams(-1, dp(96)).apply {
+                LinearLayout.LayoutParams(-1, dp(116)).apply {
                     bottomMargin = dp(2)
                 },
             )
@@ -333,76 +339,179 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(0, dp(44), 1f),
             )
             actions.addView(
-                quietAction("+ Log today") {
+                button("+ Log today") {
                         Store.log(h.id, 1) { error -> if (error != null) toast(error) }
                     }
                     .apply {
                         textSize = 13f
-                        setTextColor(Theme.text)
-                        setPadding(dp(12), 0, dp(12), 0)
                         minHeight = dp(44)
                         minimumHeight = dp(44)
-                        val pill = Theme.shape(Theme.bg, dp(16).toFloat()).apply {
-                            setStroke(dp(1), Theme.divider)
-                        }
-                        val ripple = android.graphics.drawable.RippleDrawable(
-                            android.content.res.ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
-                            pill,
-                            null,
-                        )
-                        background = android.graphics.drawable.InsetDrawable(ripple, 0, dp(7), 0, dp(7))
-                        setPadding(dp(12), 0, dp(12), 0)
+                        minimumWidth = 0
+                        minWidth = 0
+                        stateListAnimator = null
+                        val surface = Theme.shape(Theme.text, dp(8).toFloat())
+                        background = android.graphics.drawable.InsetDrawable(surface, 0, dp(4), 0, dp(4))
+                        gravity = Gravity.CENTER
+                        setPadding(dp(14), 0, dp(14), 0)
                         contentDescription = "Log ${h.name} for today"
                     },
                 LinearLayout.LayoutParams(-2, dp(44)),
             )
             card.addView(actions)
-            root.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+            root.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         }
         if (Store.habits.size > 4) {
-            val nav = row()
+            val nav = row().apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, 0) }
+            fun pageButton(symbol: String, description: String, enabled: Boolean, action: () -> Unit) =
+                quietAction(symbol, action).apply {
+                    isEnabled = enabled
+                    alpha = if (enabled) 1f else .35f
+                    textSize = 16f
+                    setTextColor(Theme.text)
+                    val surface = Theme.bordered(Theme.card, Theme.controlBorder, dp(10).toFloat(), dp(1))
+                    background = android.graphics.drawable.InsetDrawable(surface, dp(2), dp(4), dp(2), dp(4))
+                    gravity = Gravity.CENTER
+                    setPadding(0, 0, 0, 0)
+                    contentDescription = description
+                }
             nav.addView(
-                button("‹") {
-                        page--
-                        render()
-                    }
-                    .apply { isEnabled = page > 0; contentDescription = "Previous activity page" },
-                LinearLayout.LayoutParams(dp(48), dp(44)),
+                pageButton("‹", "Previous activity page", page > 0) {
+                    page--
+                    render()
+                },
+                LinearLayout.LayoutParams(dp(44), dp(44)),
             )
             nav.addView(
                 label("${page+1} / ${(Store.habits.size+3)/4}", 12f, Theme.muted).apply {
                     gravity = Gravity.CENTER
+                    setTypeface(null, Typeface.BOLD)
                 },
-                LinearLayout.LayoutParams(0, dp(44), 1f),
+                LinearLayout.LayoutParams(dp(64), dp(44)),
             )
             nav.addView(
-                button("›") {
-                        page++
-                        render()
-                    }
-                    .apply { isEnabled = (page + 1) * 4 < Store.habits.size; contentDescription = "Next activity page" },
-                LinearLayout.LayoutParams(dp(48), dp(44)),
+                pageButton("›", "Next activity page", (page + 1) * 4 < Store.habits.size) {
+                    page++
+                    render()
+                },
+                LinearLayout.LayoutParams(dp(44), dp(44)),
             )
             root.addView(nav)
         }
     }
 
     private fun activityOptions(habit: Habit) {
-        val actions = arrayOf("Edit goal", "Activity colour")
-        PrettyDialog.Builder(this)
-            .setTitle(habit.name)
-            .setItems(actions) { dialog, index ->
-                dialog.dismiss()
-                if (index == 0) editActivity(habit)
-                else PrettyDialog.Builder(this, dialogTheme())
-                    .setTitle("Activity colour")
-                    .setSingleChoiceItems(Theme.names, habit.color) { colours, colour ->
-                        Store.color(habit.id, colour)
-                        colours.dismiss()
+        val colorIdx = habit.color.coerceIn(0, Theme.colors.lastIndex)
+        val goalSummary = habit.goal?.let {
+            "${it.target} ${if (it.period == "weekly") "per week" else "per day"}"
+        } ?: "No goal set"
+        lateinit var dialog: PrettyDialog
+
+        fun optionCard(title: String, subtitle: String, swatchColor: Int? = null, action: () -> Unit) =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(56)
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(12).toFloat(), dp(1))
+                isClickable = true
+                isFocusable = true
+                contentDescription = "$title, $subtitle"
+                val textCol = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(label(title, 15f, Theme.text).apply {
+                        setTypeface(null, Typeface.BOLD)
+                        setPadding(0, 0, 0, 0)
+                    })
+                    val subRow = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
                     }
-                    .setNegativeButton("Cancel", null)
-                    .show()
+                    swatchColor?.let {
+                        subRow.addView(View(this@MainActivity).apply {
+                            background = Theme.shape(it, dp(5).toFloat())
+                        }, LinearLayout.LayoutParams(dp(10), dp(10)).apply { marginEnd = dp(6) })
+                    }
+                    subRow.addView(label(subtitle, 13f, Theme.muted).apply { setPadding(0, 0, 0, 0) })
+                    addView(subRow, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+                }
+                addView(textCol, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(label("›", 18f, Theme.muted).apply { setPadding(dp(8), 0, 0, 0) })
+                setOnClickListener {
+                    dialog.dismiss()
+                    action()
+                }
             }
+
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        list.addView(optionCard("Edit goal", goalSummary) { editActivity(habit) })
+        list.addView(
+            optionCard("Activity colour", Theme.names[colorIdx], Theme.colors[colorIdx]) {
+                activityColourPicker(habit)
+            },
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) },
+        )
+
+        dialog = PrettyDialog.Builder(this)
+            .setTitle(habit.name)
+            .setView(list)
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun activityColourPicker(habit: Habit) {
+        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        lateinit var dialog: PrettyDialog
+        val activeColor = habit.color.coerceIn(0, Theme.colors.lastIndex)
+
+        var row: LinearLayout? = null
+        Theme.names.forEachIndexed { index, name ->
+            if (index % 2 == 0) {
+                row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                grid.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
+                    if (index > 0) topMargin = dp(8)
+                })
+            }
+            val selected = index == activeColor
+            val chip = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(48)
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                background = Theme.bordered(
+                    if (selected) Theme.card else Theme.bg,
+                    if (selected) Theme.text else Theme.controlBorder,
+                    dp(10).toFloat(),
+                    dp(if (selected) 2 else 1),
+                )
+                isClickable = true
+                isFocusable = true
+                contentDescription = if (selected) "$name, selected" else name
+                addView(View(this@MainActivity).apply {
+                    background = Theme.shape(Theme.colors[index], dp(8).toFloat())
+                }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(10) })
+                addView(label(name, 14f, Theme.text).apply {
+                    setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+                    setPadding(0, 0, 0, 0)
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                if (selected) {
+                    addView(label("✓", 14f, Theme.text).apply {
+                        setTypeface(null, Typeface.BOLD)
+                        setPadding(dp(4), 0, 0, 0)
+                    })
+                }
+                setOnClickListener {
+                    Store.color(habit.id, index)
+                    dialog.dismiss()
+                }
+            }
+            row!!.addView(chip, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
+                if (index % 2 == 0) marginEnd = dp(8)
+            })
+        }
+
+        dialog = PrettyDialog.Builder(this)
+            .setTitle("Activity colour")
+            .setView(grid)
             .setNegativeButton("Cancel", null)
             .show()
     }
@@ -412,34 +521,59 @@ class MainActivity : Activity() {
     private fun settings(anchor: View) {
         val menu = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(6), dp(4), dp(6), dp(4))
+            setPadding(dp(6), dp(6), dp(6), dp(6))
         }
-        val popup = PopupWindow(menu, dp(208), ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
-            setBackgroundDrawable(Theme.shape(Theme.card, dp(12).toFloat()))
+        val popup = PopupWindow(menu, dp(220), ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
+            setBackgroundDrawable(Theme.bordered(Theme.card, Theme.controlBorder, dp(12).toFloat(), dp(1)))
             elevation = dp(10).toFloat()
             isOutsideTouchable = true
         }
-        fun option(title: String, action: () -> Unit) {
-            menu.addView(quietAction(title) {
-                popup.dismiss()
-                action()
-            }.apply {
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                setPadding(dp(12), 0, dp(8), 0)
-                setTextColor(Theme.text)
-                textSize = 14f
-            }, LinearLayout.LayoutParams(-1, dp(44)))
+        fun option(title: String, color: Int = Theme.text, badgeColor: Int? = null, action: () -> Unit) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(44)
+                setPadding(dp(12), 0, dp(12), 0)
+                background = android.graphics.drawable.RippleDrawable(
+                    android.content.res.ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
+                    null, Theme.shape(Color.WHITE, dp(8).toFloat()),
+                )
+                isClickable = true
+                isFocusable = true
+                addView(label(title, 14f, color).apply {
+                    setPadding(0, 0, 0, 0)
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                badgeColor?.let {
+                    addView(View(this@MainActivity).apply {
+                        background = Theme.shape(it, dp(4).toFloat())
+                    }, LinearLayout.LayoutParams(dp(8), dp(8)))
+                }
+                setOnClickListener {
+                    popup.dismiss()
+                    action()
+                }
+            }
+            menu.addView(row, LinearLayout.LayoutParams(-1, dp(44)))
         }
         if (Store.ready) {
             option("Statistics") { openDetails("statistics") }
             option("Goal reminders") { openDetails("reminders") }
             option("Add a widget") { openDetails("widgets") }
         }
-        option("Check for updates") { AppUpdates.show(this) }
-        if (Store.ready) option("Sign out") {
-            if (Store.demo) Store.leaveDemo() else Store.auth.signOut()
-            GoalReminders.schedule(this)
-            render()
+        val updateDot = if (AppUpdates.cachedUpdate(this)) Theme.colors[0] else null
+        option("Check for updates", badgeColor = updateDot) { AppUpdates.show(this) }
+        if (Store.ready) {
+            menu.addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(4)
+                marginStart = dp(8)
+                marginEnd = dp(8)
+            })
+            option("Sign out", color = Theme.destructive) {
+                if (Store.demo) Store.leaveDemo() else Store.auth.signOut()
+                GoalReminders.schedule(this)
+                render()
+            }
         }
         popup.showAsDropDown(anchor, 0, dp(4), Gravity.END)
     }

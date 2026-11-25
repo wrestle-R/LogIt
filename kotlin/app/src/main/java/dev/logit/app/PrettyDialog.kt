@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Dialog
 import android.content.DialogInterface
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.view.Gravity
 import android.view.View
@@ -15,19 +16,37 @@ import android.widget.*
 class PrettyDialog(private val owner: Activity) : Dialog(owner) {
     private val content =
         owner.column().apply {
-            background = Theme.shape(Theme.card, owner.dp(24).toFloat())
-            setPadding(owner.dp(24), owner.dp(24), owner.dp(24), owner.dp(20))
+            background = Theme.bordered(Theme.card, Theme.controlBorder, owner.dp(18).toFloat(), owner.dp(1))
+            setPadding(owner.dp(20), owner.dp(18), owner.dp(20), owner.dp(16))
         }
     private val heading =
-        owner.label("", 22f).apply {
-            setTypeface(null, 1)
+        owner.label("", 20f).apply {
+            setTypeface(null, Typeface.BOLD)
             letterSpacing = -.025f
+            setPadding(0, 0, 0, 0)
         }
-    private val message = owner.label("", 14f, Theme.muted)
+    private val message = owner.label("", 14f, Theme.muted).apply {
+        setPadding(0, 0, 0, 0)
+    }
+    private val bodyContainer = LinearLayout(owner).apply {
+        orientation = LinearLayout.VERTICAL
+    }
+    private val bodyScroll = object : ScrollView(owner) {
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val max = (owner.resources.displayMetrics.heightPixels * 0.62f).toInt()
+            val capped = View.MeasureSpec.makeMeasureSpec(max, View.MeasureSpec.AT_MOST)
+            super.onMeasure(widthMeasureSpec, capped)
+        }
+    }.apply {
+        isFillViewport = true
+        overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+        visibility = View.GONE
+        addView(bodyContainer)
+    }
     private val actions =
         LinearLayout(owner).apply {
             gravity = Gravity.END
-            setPadding(0, owner.dp(22), 0, 0)
+            setPadding(0, owner.dp(18), 0, 0)
         }
     private val buttons = mutableMapOf<Int, Button>()
 
@@ -36,10 +55,15 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
         content.addView(heading)
         content.addView(
             message,
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = owner.dp(8) },
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = owner.dp(6) },
+        )
+        content.addView(
+            bodyScroll,
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = owner.dp(14) },
         )
         setContentView(content)
         window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
     }
 
     override fun setTitle(title: CharSequence?) {
@@ -53,12 +77,17 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
 
     fun getButton(which: Int): Button = buttons.getValue(which)
 
+    fun compactForm() {
+        // Unified into the shared PrettyDialog style; retained for source compatibility.
+        content.background = Theme.bordered(Theme.card, Theme.controlBorder, owner.dp(18).toFloat(), owner.dp(1))
+        content.setPadding(owner.dp(20), owner.dp(18), owner.dp(20), owner.dp(16))
+    }
+
     fun body(view: View) {
-        content.addView(
+        bodyScroll.visibility = View.VISIBLE
+        bodyContainer.addView(
             view,
-            LinearLayout.LayoutParams(-1, view.layoutParams?.height ?: -2).apply {
-                topMargin = owner.dp(16)
-            },
+            LinearLayout.LayoutParams(-1, view.layoutParams?.height ?: -2),
         )
     }
 
@@ -73,16 +102,28 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
                     textSize = 14f
                     minWidth = 0
                     minimumWidth = 0
+                    minHeight = owner.dp(44)
+                    minimumHeight = owner.dp(44)
+                    stateListAnimator = null
                     setPadding(owner.dp(16), 0, owner.dp(16), 0)
                     if (which == DialogInterface.BUTTON_NEGATIVE) {
-                        background = Theme.shape(Theme.card, owner.dp(12).toFloat())
-                        setTextColor(Theme.muted)
+                        background = Theme.bordered(
+                            Theme.track,
+                            Theme.controlBorder,
+                            owner.dp(10).toFloat(),
+                            owner.dp(1),
+                        )
+                        setTextColor(Theme.text)
+                    } else {
+                        background = Theme.shape(Theme.text, owner.dp(10).toFloat())
+                        setTextColor(Theme.bg)
+                        setTypeface(null, Typeface.BOLD)
                     }
                 }
         buttons[which] = button
         actions.addView(
             button,
-            LinearLayout.LayoutParams(0, owner.dp(48), 1f).apply {
+            LinearLayout.LayoutParams(0, owner.dp(44), 1f).apply {
                 if (actions.childCount > 1) marginStart = owner.dp(10)
             },
         )
@@ -90,12 +131,8 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
 
     override fun show() {
         super.show()
-        window?.setLayout(
-            (owner.resources.displayMetrics.widthPixels - owner.dp(48)).coerceAtLeast(
-                owner.dp(260)
-            ),
-            WindowManager.LayoutParams.WRAP_CONTENT,
-        )
+        val width = (owner.resources.displayMetrics.widthPixels - owner.dp(40)).coerceIn(owner.dp(280), owner.dp(460))
+        window?.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
         window?.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         window?.setDimAmount(.68f)
     }
@@ -149,32 +186,29 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
             d.setMessage(message)
             body?.let { d.body(it) }
             entries?.let { items ->
-                val list = LinearLayout(a).apply { orientation = 1 }
+                val list = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
                 items.forEachIndexed { index, text ->
+                    val isSelected = selected == index
                     val row =
-                        a.label(if (selected == index) "✓  $text" else text, 15f).apply {
+                        a.label(if (isSelected) "✓  $text" else text, 15f).apply {
                             gravity = Gravity.CENTER_VERTICAL
-                            setPadding(a.dp(12), 0, a.dp(12), 0)
-                            if (selected == index) {
-                                setTextColor(Theme.text)
-                                background = Theme.shape(Theme.bg, 12f)
-                            }
+                            setPadding(a.dp(14), 0, a.dp(14), 0)
+                            setTextColor(Theme.text)
+                            background =
+                                if (isSelected)
+                                    Theme.bordered(Theme.bg, Theme.controlBorder, a.dp(10).toFloat(), a.dp(1))
+                                else null
                             isFocusable = true
                             setOnClickListener {
                                 choice?.invoke(d, index)
                                 d.dismiss()
                             }
                         }
-                    list.addView(row, LinearLayout.LayoutParams(-1, a.dp(48)))
+                    list.addView(row, LinearLayout.LayoutParams(-1, a.dp(48)).apply {
+                        if (index > 0) topMargin = a.dp(4)
+                    })
                 }
-                val scroll = ScrollView(a)
-                scroll.addView(list)
-                d.body(
-                    scroll.apply {
-                        layoutParams =
-                            LinearLayout.LayoutParams(-1, minOf(items.size * a.dp(48), a.dp(320)))
-                    }
-                )
+                d.body(list)
             }
             negative?.let { d.action(-2, it.first, it.second) }
             positive?.let { d.action(-1, it.first, it.second) }
