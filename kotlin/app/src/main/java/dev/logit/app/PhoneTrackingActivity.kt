@@ -251,10 +251,9 @@ class PhoneTrackingActivity : ComponentActivity() {
     }
 
     private fun healthRuleEditor(owner: String, metric: HealthMetric, existing: HealthRule?) {
-        val habits = Store.habits
-        if (habits.isEmpty()) { toast("Add an activity first."); return }
         val form = form()
-        val activity = activityChoice(form, habits, existing?.activityId, optional = false)
+        val activity = activityChoice(form, owner, existing?.activityId ?: intent.getStringExtra("activityId"),
+            optional = false)
         val target = form.field(if (metric == HealthMetric.Steps) "Steps per day" else "Minutes per session",
             (existing?.target ?: metric.defaultTarget).toString(), number = true, maxLength = 6)
         val error = form.error()
@@ -496,16 +495,14 @@ class PhoneTrackingActivity : ComponentActivity() {
     }
 
     private fun appRuleEditor(owner: String, rule: AppLogRule?, preselected: String?) {
-        val habits = Store.habits
-        if (habits.isEmpty()) { toast("Add an activity first."); return }
         val form = form()
-        val target = activityChoice(form, habits, rule?.activityId ?: preselected ?: habits.first().id, optional = false)
+        val target = activityChoice(form, owner, rule?.activityId ?: preselected, optional = false)
         var selectedApp = rule?.app
-        lateinit var appButton: View
+        lateinit var appButton: android.widget.Button
         appButton = action(selectedApp?.label ?: "Choose an app") {
             pickApps(selectedApp?.let(::listOf).orEmpty(), multi = false) {
                 selectedApp = it.firstOrNull()
-                (appButton as? android.widget.Button)?.text = selectedApp?.label ?: "Choose an app"
+                appButton.text = selectedApp?.label ?: "Choose an app"
             }
         }
         form.addView(appButton, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
@@ -517,8 +514,10 @@ class PhoneTrackingActivity : ComponentActivity() {
             val app = selectedApp
             val count = minimum.text.toString().toIntOrNull()
             val activity = target()?.id
-            if (app == null || count == null || count !in 1..1440 || activity == null) {
-                error.text = "Choose an activity and app, and enter 1 to 1,440 minutes."
+            if (activity == null) { error.text = "Choose or create an activity."; return@showForm }
+            if (app == null) { error.text = "Choose an app to track."; return@showForm }
+            if (count == null || count !in 1..1440) {
+                error.text = "Enter 1 to 1,440 minutes."
                 return@showForm
             }
             val next = AppLogRule(activity, app, count, System.currentTimeMillis())
@@ -588,15 +587,17 @@ class PhoneTrackingActivity : ComponentActivity() {
             form.addView(choose, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
         }
         val maximum = form.field("Daily limit in minutes", (existing?.minutes ?: if (total) 360 else 180).toString(), number = true)
-        val target = activityChoice(form, Store.habits, existing?.activityId, optional = true)
+        val target = activityChoice(form, owner, existing?.activityId, optional = true)
         val error = form.error()
         showForm(if (total) "Total phone limit" else "App group limit", form, "Save limit", existing?.let {
             { PhoneTracking.saveLimits(owner, PhoneTracking.limits(owner).filterNot { current -> current.id == existing.id }); render() }
         }) { dialog ->
             val count = maximum.text.toString().toIntOrNull()
             val title = if (total) "Total phone use" else name?.text.toString().trim()
-            if (count == null || count !in 1..1440 || title.isBlank() || (!total && apps.isEmpty())) {
-                error.text = "Enter 1 to 1,440 minutes and complete the group details."
+            if (title.isBlank()) { error.text = "Give this group a name."; return@showForm }
+            if (!total && apps.isEmpty()) { error.text = "Choose at least one app."; return@showForm }
+            if (count == null || count !in 1..1440) {
+                error.text = "Enter 1 to 1,440 minutes."
                 return@showForm
             }
             val id = existing?.id ?: if (total) ScreenLimit.totalId else ScreenLimit.newId()
@@ -607,14 +608,38 @@ class PhoneTrackingActivity : ComponentActivity() {
         }
     }
 
-    private fun activityChoice(form: LinearLayout, habits: List<Habit>, id: String?, optional: Boolean): () -> Habit? {
-        val options = (if (optional) listOf<Habit?>(null) else emptyList()) + habits
-        if (options.isEmpty()) return { null }
-        form.addView(label(if (optional) "Activity to log when under limit" else "Activity to log", 13f, Theme.muted))
-        val choice = ChoiceView(this, options.map { it?.name ?: "None" }.toTypedArray(),
-            options.indexOfFirst { it?.id == id }.coerceAtLeast(0))
-        form.addView(choice, LinearLayout.LayoutParams(-1, dp(48)))
-        return { options.getOrNull(choice.selectedItemPosition) }
+    private fun activityChoice(form: LinearLayout, owner: String, id: String?, optional: Boolean): () -> Habit? {
+        val choices = form()
+        form.addView(choices)
+        var selectedId = id
+        fun populate() {
+            choices.removeAllViews()
+            val habits = Store.habitsFor(owner)
+            if (habits.isEmpty()) return
+            val options = listOf<Habit?>(null) + habits
+            choices.addView(label(if (optional) "Activity to log when under limit" else "Activity to log", 13f, Theme.muted))
+            val choice = ChoiceView(this, options.map { it?.name ?: if (optional) "None" else "Choose an activity" }.toTypedArray(),
+                options.indexOfFirst { it?.id == selectedId }.coerceAtLeast(0))
+            choices.addView(choice, LinearLayout.LayoutParams(-1, dp(48)))
+            choice.onChange = { selectedId = options[choice.selectedItemPosition]?.id }
+        }
+        populate()
+        form.addView(quietAction("+ Create activity") {
+            if (Store.trackingOwner() == owner) {
+                editActivity(initialName = intent.getStringExtra("activityName").orEmpty()) { createdId ->
+                    selectedId = createdId
+                    intent.removeExtra("activityName")
+                    populate()
+                }
+            }
+        }.apply {
+            setTextColor(Theme.text)
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setPadding(dp(4), 0, dp(4), 0)
+            minHeight = dp(44)
+            minimumHeight = dp(44)
+        }, LinearLayout.LayoutParams(-1, -2))
+        return { Store.habitsFor(owner).find { it.id == selectedId } }
     }
 
     private fun pickApps(selected: List<UsageApp>, multi: Boolean, onDone: (List<UsageApp>) -> Unit) {
@@ -709,7 +734,7 @@ class PhoneTrackingActivity : ComponentActivity() {
     private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_LONG).show()
 }
 
-internal fun Activity.openTracking(screen: String, habitId: String? = null) {
+internal fun Activity.openTracking(screen: String, habitId: String? = null, activityName: String? = null) {
     startActivity(Intent(this, PhoneTrackingActivity::class.java)
-        .putExtra("trackingScreen", screen).putExtra("activityId", habitId))
+        .putExtra("trackingScreen", screen).putExtra("activityId", habitId).putExtra("activityName", activityName))
 }

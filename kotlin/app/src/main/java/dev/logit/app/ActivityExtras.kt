@@ -37,7 +37,11 @@ private fun Activity.inlineErrorLabel() = label("", 12f, Theme.destructive).appl
     setPadding(dp(2), dp(4), 0, 0)
 }
 
-fun MainActivity.editActivity(habit: Habit? = null) {
+fun Activity.editActivity(
+    habit: Habit? = null,
+    initialName: String = "",
+    onCreated: ((String) -> Unit)? = null,
+) {
     fun input(hintText: String, initial: String, type: Int) = EditText(this).apply {
         hint = hintText
         setText(initial)
@@ -54,7 +58,7 @@ fun MainActivity.editActivity(habit: Habit? = null) {
     }
 
     val fields = column().apply { background = null; setPadding(0, 0, 0, 0) }
-    val name = input("e.g. Read", habit?.name.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES).apply {
+    val name = input("e.g. Read", habit?.name ?: initialName, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES).apply {
         filters = arrayOf(InputFilter.LengthFilter(80))
         contentDescription = "Activity name"
     }
@@ -182,14 +186,14 @@ fun MainActivity.editActivity(habit: Habit? = null) {
     refreshSegments()
 
     lateinit var dialog: PrettyDialog
-    if (habit == null) {
+    if (habit == null && onCreated == null) {
         fields.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             addView(fieldLabel("Templates & tracking").apply { setPadding(0, 0, 0, 0) },
                 LinearLayout.LayoutParams(0, -2, 1f))
             addView(quietAction("Health Connect") {
                 dialog.dismiss()
-                openTracking("health")
+                openTracking("health", activityName = name.text.toString().trim())
             }.apply {
                 setTextColor(Theme.text)
                 setPadding(dp(8), dp(4), dp(4), dp(4))
@@ -202,7 +206,7 @@ fun MainActivity.editActivity(habit: Habit? = null) {
         for ((title, route) in routes) {
             val shortcut = quietAction(title) {
                 dialog.dismiss()
-                openTracking(route)
+                openTracking(route, activityName = name.text.toString().trim())
             }.apply {
                 setTextColor(Theme.text)
                 gravity = Gravity.CENTER
@@ -253,16 +257,18 @@ fun MainActivity.editActivity(habit: Habit? = null) {
         val save = dialog.getButton(-1)
         if (!save.isEnabled) return
         save.isEnabled = false
-        val done: (String?) -> Unit = { problem ->
+        val done: (String?, String?) -> Unit = { id, problem ->
             if (problem == null) {
                 dialog.dismiss()
-                if (goal != null) GoalReminders.offer(this)
+                if (id != null) onCreated?.invoke(id)
+                if (goal != null && onCreated == null) GoalReminders.offer(this)
             } else {
                 save.isEnabled = true
                 Toast.makeText(this, problem, Toast.LENGTH_LONG).show()
             }
         }
-        if (habit == null) Store.add(title, goal, done) else Store.edit(habit.id, title, goal, done)
+        if (habit == null) Store.addActivity(title, goal, done)
+        else Store.edit(habit.id, title, goal) { done(null, it) }
     }
 
     name.setOnEditorActionListener { _, actionId, _ ->
