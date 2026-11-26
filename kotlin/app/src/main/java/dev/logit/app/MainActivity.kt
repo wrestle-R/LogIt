@@ -455,13 +455,13 @@ class MainActivity : Activity() {
         } ?: "No goal set"
         lateinit var dialog: PrettyDialog
 
-        fun optionCard(title: String, subtitle: String, swatchColor: Int? = null, destructive: Boolean = false, action: () -> Unit) =
+        fun optionRow(title: String, subtitle: String, swatchColor: Int? = null, destructive: Boolean = false, action: () -> Unit) =
             LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                minimumHeight = dp(56)
-                setPadding(dp(14), dp(10), dp(14), dp(10))
-                background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(12).toFloat(), dp(1))
+                minimumHeight = dp(48)
+                setPadding(dp(12), dp(7), dp(12), dp(7))
+                if (destructive) background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
                 isClickable = true
                 isFocusable = true
                 contentDescription = "$title, $subtitle"
@@ -492,25 +492,39 @@ class MainActivity : Activity() {
             }
 
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        list.addView(optionCard("Rename & edit", goalSummary) { editActivity(habit) })
-        list.addView(
-            optionCard("Activity colour", Theme.names[colorIdx], Theme.colors[colorIdx]) {
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
+        }
+        fun addOption(row: View) {
+            if (actions.childCount > 0) {
+                actions.addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)).apply {
+                    marginStart = dp(12)
+                    marginEnd = dp(12)
+                })
+            }
+            actions.addView(row, LinearLayout.LayoutParams(-1, -2))
+        }
+        addOption(optionRow("Rename & edit", goalSummary) { editActivity(habit) })
+        addOption(
+            optionRow("Activity colour", Theme.names[colorIdx], Theme.colors[colorIdx]) {
                 activityColourPicker(habit)
             },
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) },
         )
 
         if (Store.trackingOwner()?.let(PhoneTracking::sleep)?.activityId == habit.id) {
-            list.addView(optionCard("Sleep history", "Review and edit your estimates") {
+            addOption(optionRow("Sleep history", "Review and edit your sleep") {
                 openTracking("sleep")
-            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+            })
         }
-        list.addView(optionCard("Delete activity", "Permanently removes its history", destructive = true) {
+        list.addView(actions)
+        list.addView(optionRow("Delete activity", "Permanently removes its history", destructive = true) {
             confirmDelete(habit)
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
 
         dialog = PrettyDialog.Builder(this)
             .setTitle(habit.name)
+            .setCompact()
             .setView(list)
             .setNegativeButton("Cancel", null)
             .show()

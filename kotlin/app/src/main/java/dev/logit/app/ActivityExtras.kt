@@ -226,11 +226,17 @@ fun Activity.editActivity(
         }
         fields.addView(shortcuts, LinearLayout.LayoutParams(-1, -2))
     }
+    val action = when {
+        onCreated != null -> "Create & select"
+        habit == null -> "Add activity"
+        else -> "Save changes"
+    }
     dialog = PrettyDialog.Builder(this)
-        .setTitle(if (habit == null) "New activity" else "Edit activity")
+        .setTitle(if (onCreated != null) "Create activity" else if (habit == null) "New activity" else "Edit activity")
         .setView(fields)
         .setNegativeButton("Cancel", null)
-        .setPositiveButton(if (habit == null) "Add activity" else "Save changes", null)
+        .setPositiveButton(action, null)
+        .apply { if (onCreated != null) setCompact() }
         .create()
 
     fun submit() {

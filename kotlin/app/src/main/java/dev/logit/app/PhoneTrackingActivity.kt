@@ -12,10 +12,14 @@ import android.text.InputFilter
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.widget.EditText
+import android.widget.BaseAdapter
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.ScrollView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -49,7 +53,7 @@ class PhoneTrackingActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        selectedDay = state?.getString("day")?.let(LocalDate::parse)
+        selectedDay = (state?.getString("day") ?: intent.getStringExtra("sleepDay"))?.let(LocalDate::parse)
         offerWidget = state?.getBoolean("offerWidget") == true
     }
 
@@ -397,8 +401,8 @@ class PhoneTrackingActivity : ComponentActivity() {
 
     private fun sleepSetup(owner: String, settings: SleepTracking?) {
         val form = form()
-        val existing = if (settings == null) Store.habits.firstOrNull { it.name.equals("Sleep", ignoreCase = true) } else null
-        val name = form.field("Activity name", existing?.name ?: "Sleep")
+        val initialName = intent.getStringExtra("activityName").orEmpty().ifBlank { "Sleep" }
+        val name = form.field("Activity name", initialName)
         if (settings != null) hideField(form, name)
         val schedule = settings?.schedule ?: SleepSchedule()
         val bed = form.field("Usual bedtime (24-hour)", schedule.bedtime.format(inputTime))
@@ -421,7 +425,8 @@ class PhoneTrackingActivity : ComponentActivity() {
                 render()
                 maybeOfferWidget()
             }
-            val current = settings?.activityId ?: existing?.takeIf { it.name == name.text.toString().trim() }?.id
+            val current = settings?.activityId ?: Store.habitsFor(owner)
+                .firstOrNull { it.name.equals(name.text.toString().trim(), ignoreCase = true) }?.id
             if (current != null) save(current)
             else {
                 dialog.getButton(-1).isEnabled = false
@@ -498,14 +503,15 @@ class PhoneTrackingActivity : ComponentActivity() {
         val form = form()
         val target = activityChoice(form, owner, rule?.activityId ?: preselected, optional = false)
         var selectedApp = rule?.app
+        form.addView(label("App to track", 13f, Theme.muted))
         lateinit var appButton: android.widget.Button
         appButton = action(selectedApp?.label ?: "Choose an app") {
             pickApps(selectedApp?.let(::listOf).orEmpty(), multi = false) {
                 selectedApp = it.firstOrNull()
                 appButton.text = selectedApp?.label ?: "Choose an app"
             }
-        }
-        form.addView(appButton, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }
+        form.addView(appButton, LinearLayout.LayoutParams(-1, -2))
         val minimum = form.field("Minimum minutes per day", (rule?.minutes ?: 5).toString(), number = true)
         val error = form.error()
         showForm("App rule", form, "Save rule", rule?.let {
@@ -574,32 +580,39 @@ class PhoneTrackingActivity : ComponentActivity() {
     private fun limitEditor(owner: String, existing: ScreenLimit?, total: Boolean) {
         val form = form()
         val name = if (total) null else form.field("Group name", existing?.name.orEmpty())
+        val nameError = name?.let { form.error() }
         val available = AndroidUsage.launchableApps(this).associateBy { it.id }
         var apps = existing?.apps.orEmpty().map { available[it] ?: UsageApp(it, "Unavailable app") }
+        var appsError: android.widget.TextView? = null
         if (!total) {
+            form.addView(label("Apps in group", 13f, Theme.muted))
             lateinit var choose: android.widget.Button
             choose = action(if (apps.isEmpty()) "Choose apps" else "${apps.size} apps selected") {
                 pickApps(apps, multi = true) {
                     apps = it
                     choose.text = if (it.isEmpty()) "Choose apps" else "${it.size} apps selected"
+                    if (it.isNotEmpty()) appsError?.text = ""
                 }
-            }
-            form.addView(choose, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+            }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }
+            form.addView(choose, LinearLayout.LayoutParams(-1, -2))
+            appsError = form.error()
         }
         val maximum = form.field("Daily limit in minutes", (existing?.minutes ?: if (total) 360 else 180).toString(), number = true)
+        val minutesError = form.error()
+        name?.doAfterTextChanged { nameError?.text = "" }
+        maximum.doAfterTextChanged { minutesError.text = "" }
         val target = activityChoice(form, owner, existing?.activityId, optional = true)
-        val error = form.error()
         showForm(if (total) "Total phone limit" else "App group limit", form, "Save limit", existing?.let {
             { PhoneTracking.saveLimits(owner, PhoneTracking.limits(owner).filterNot { current -> current.id == existing.id }); render() }
         }) { dialog ->
             val count = maximum.text.toString().toIntOrNull()
             val title = if (total) "Total phone use" else name?.text.toString().trim()
-            if (title.isBlank()) { error.text = "Give this group a name."; return@showForm }
-            if (!total && apps.isEmpty()) { error.text = "Choose at least one app."; return@showForm }
-            if (count == null || count !in 1..1440) {
-                error.text = "Enter 1 to 1,440 minutes."
-                return@showForm
-            }
+            val missingApps = !total && apps.isEmpty()
+            val validMinutes = count != null && count in 1..1440
+            nameError?.text = if (title.isBlank()) "Give this group a name." else ""
+            appsError?.text = if (missingApps) "Choose at least one app." else ""
+            minutesError.text = if (validMinutes) "" else "Enter 1 to 1,440 minutes."
+            if (title.isBlank() || missingApps || count == null || !validMinutes) return@showForm
             val id = existing?.id ?: if (total) ScreenLimit.totalId else ScreenLimit.newId()
             val next = ScreenLimit(id, title, apps.mapTo(mutableSetOf()) { it.id }, count, target()?.id, System.currentTimeMillis())
             PhoneTracking.saveLimits(owner, PhoneTracking.limits(owner).filterNot { it.id == id } + next)
@@ -619,7 +632,11 @@ class PhoneTrackingActivity : ComponentActivity() {
             val options = listOf<Habit?>(null) + habits
             choices.addView(label(if (optional) "Activity to log when under limit" else "Activity to log", 13f, Theme.muted))
             val choice = ChoiceView(this, options.map { it?.name ?: if (optional) "None" else "Choose an activity" }.toTypedArray(),
-                options.indexOfFirst { it?.id == selectedId }.coerceAtLeast(0))
+                options.indexOfFirst { it?.id == selectedId }.coerceAtLeast(0),
+                options.map { it?.let { habit -> Theme.colors[habit.color.coerceIn(0, Theme.colors.lastIndex)] } ?: 0 }
+                    .toIntArray()).apply {
+                background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
+            }
             choices.addView(choice, LinearLayout.LayoutParams(-1, dp(48)))
             choice.onChange = { selectedId = options[choice.selectedItemPosition]?.id }
         }
@@ -643,40 +660,94 @@ class PhoneTrackingActivity : ComponentActivity() {
     }
 
     private fun pickApps(selected: List<UsageApp>, multi: Boolean, onDone: (List<UsageApp>) -> Unit) {
-        val apps = AndroidUsage.launchableApps(this)
+        val apps = (AndroidUsage.launchableApps(this) + selected).distinctBy(UsageApp::id)
         val chosen = selected.associateByTo(linkedMapOf()) { it.id }
-        val form = form()
-        val search = form.field("Find an app", "")
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        form.addView(ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(-1, dp(220)))
+        val form = form().apply { isFocusableInTouchMode = true }
+        val search = form.field("Search installed apps", "", showLabel = false).apply {
+            hint = contentDescription
+            setHintTextColor(Theme.muted)
+        }
+        val status = label("", 12f, Theme.muted).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        form.addView(status)
+        val list = object : ListView(this) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                val cap = minOf(dp(360), resources.displayMetrics.heightPixels / 2)
+                val size = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) cap
+                    else minOf(cap, MeasureSpec.getSize(heightMeasureSpec))
+                super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(size, MeasureSpec.AT_MOST))
+            }
+        }.apply {
+            divider = null
+            dividerHeight = 0
+        }
+        form.addView(list, LinearLayout.LayoutParams(-1, -2, 1f))
         lateinit var dialog: PrettyDialog
-        fun populate(query: String) {
-            list.removeAllViews()
-            val matches = apps.filter { it.label.contains(query, ignoreCase = true) }
-            if (matches.isEmpty()) list.addView(label("No apps found", 14f, Theme.muted))
-            for (app in matches) {
-                val row = quietAction(if (app.id in chosen) "✓  ${app.label}" else app.label) {
-                    if (!multi) {
-                        onDone(listOf(app))
-                        dialog.dismiss()
-                    } else {
-                        if (app.id in chosen) chosen.remove(app.id) else chosen[app.id] = app
-                        populate(search.text.toString())
-                    }
-                }.apply {
-                    gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                    setPadding(dp(8), dp(6), dp(8), dp(6))
-                    isSelected = app.id in chosen
+        val repeatedLabels = apps.groupingBy { it.label }.eachCount().filterValues { it > 1 }.keys
+        var matches = apps
+        val icons = mutableMapOf<String, android.graphics.drawable.Drawable.ConstantState?>()
+        val adapter = object : BaseAdapter() {
+            override fun getCount() = matches.size
+            override fun getItem(position: Int) = matches[position]
+            override fun getItemId(position: Int) = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val row = convertView as? LinearLayout ?: LinearLayout(this@PhoneTrackingActivity).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                    minimumHeight = dp(48)
+                    setPadding(dp(10), dp(4), dp(10), dp(4))
+                    addView(ImageView(this@PhoneTrackingActivity).apply {
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }, LinearLayout.LayoutParams(dp(28), dp(28)))
+                    addView(label("", 14f), LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(10) })
+                    addView(label("✓", 15f).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO })
                 }
-                list.addView(row, LinearLayout.LayoutParams(-1, -2))
+                val app = getItem(position)
+                val checked = app.id in chosen
+                val icon = icons.getOrPut(app.id) {
+                    runCatching { packageManager.getApplicationIcon(app.id).constantState }.getOrNull()
+                }
+                (row.getChildAt(0) as ImageView).setImageDrawable(icon?.newDrawable(resources)
+                    ?: packageManager.defaultActivityIcon)
+                val name = if (app.label in repeatedLabels) "${app.label}\n${app.id}" else app.label
+                (row.getChildAt(1) as android.widget.TextView).text = name
+                row.getChildAt(2).visibility = if (checked) View.VISIBLE else View.GONE
+                row.isActivated = checked
+                row.contentDescription = if (checked) "$name, selected" else name
+                row.background = if (checked) Theme.bordered(Theme.bg, Theme.controlBorder, dp(8).toFloat(), dp(1)) else null
+                return row
             }
         }
-        search.doAfterTextChanged { populate(it.toString()) }
-        populate("")
+        fun updateStatus() {
+            status.text = when {
+                matches.isEmpty() -> "No apps found"
+                multi -> "${chosen.size} selected"
+                else -> "Select one app"
+            }
+        }
+        list.adapter = adapter
+        list.setOnItemClickListener { _, _, position, _ ->
+            val app = adapter.getItem(position)
+            if (!multi) {
+                onDone(listOf(app))
+                dialog.dismiss()
+            } else {
+                if (app.id in chosen) chosen.remove(app.id) else chosen[app.id] = app
+                adapter.notifyDataSetChanged()
+                updateStatus()
+            }
+        }
+        search.doAfterTextChanged {
+            val query = it.toString().trim()
+            matches = apps.filter { app -> app.label.contains(query, true) || app.id.contains(query, true) }
+            adapter.notifyDataSetChanged()
+            list.setSelection(0)
+            updateStatus()
+        }
+        updateStatus()
         val builder = PrettyDialog.Builder(this).setTitle(if (multi) "Choose apps" else "Choose an app")
-            .setView(form).setNegativeButton("Cancel", null)
+            .setCompact().setView(form, scroll = false).setNegativeButton("Cancel", null)
         if (multi) builder.setPositiveButton("Done") { _, _ -> onDone(chosen.values.toList()) }
         dialog = builder.create()
+        form.requestFocus()
         dialog.show()
     }
 
@@ -687,7 +758,7 @@ class PhoneTrackingActivity : ComponentActivity() {
             dialog.dismiss()
             remove()
         }
-        dialog = PrettyDialog.Builder(this).setTitle(title).setView(form)
+        dialog = PrettyDialog.Builder(this).setTitle(title).setCompact().setView(form)
             .setNegativeButton("Cancel", null).setPositiveButton(save, null).create()
         dialog.setOnShowListener { dialog.getButton(-1).setOnClickListener { onSave(dialog) } }
         dialog.show()
@@ -695,8 +766,9 @@ class PhoneTrackingActivity : ComponentActivity() {
 
     private fun form() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-    private fun LinearLayout.field(caption: String, value: String, number: Boolean = false, maxLength: Int = if (number) 4 else 80): EditText {
-        addView(label(caption, 13f, Theme.muted), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+    private fun LinearLayout.field(caption: String, value: String, number: Boolean = false,
+        maxLength: Int = if (number) 4 else 80, showLabel: Boolean = true): EditText {
+        if (showLabel) addView(label(caption, 13f, Theme.muted), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         return EditText(this@PhoneTrackingActivity).apply {
             inputType = if (number) InputType.TYPE_CLASS_NUMBER else InputType.TYPE_CLASS_TEXT
             setSingleLine(true)
@@ -707,7 +779,7 @@ class PhoneTrackingActivity : ComponentActivity() {
             setTextColor(Theme.text)
             applyMonochromeCursor(this)
             filters = arrayOf(InputFilter.LengthFilter(maxLength))
-            background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(8).toFloat(), dp(1))
+            background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
             setPadding(dp(12), dp(10), dp(12), dp(10))
             minimumHeight = dp(48)
             addView(this, LinearLayout.LayoutParams(-1, -2))
@@ -719,7 +791,12 @@ class PhoneTrackingActivity : ComponentActivity() {
         input.visibility = View.GONE
     }
 
-    private fun LinearLayout.error() = label("", 13f, Theme.destructive).also { addView(it) }
+    private fun LinearLayout.error() = label("", 13f, Theme.destructive).also { error ->
+        error.visibility = View.GONE
+        error.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        error.doAfterTextChanged { error.visibility = if (it.isNullOrBlank()) View.GONE else View.VISIBLE }
+        addView(error)
+    }
 
     private fun readTime(field: EditText): LocalTime? = runCatching {
         LocalTime.parse(field.text.toString().trim(), DateTimeFormatter.ofPattern("H:mm")

@@ -33,8 +33,10 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
     private val bodyScroll = object : ScrollView(owner) {
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
             val max = (owner.resources.displayMetrics.heightPixels * 0.62f).toInt()
-            val capped = View.MeasureSpec.makeMeasureSpec(max, View.MeasureSpec.AT_MOST)
-            super.onMeasure(widthMeasureSpec, capped)
+            val mode = View.MeasureSpec.getMode(heightMeasureSpec)
+            val available = View.MeasureSpec.getSize(heightMeasureSpec)
+            val limit = if (mode == View.MeasureSpec.UNSPECIFIED) max else minOf(max, available)
+            super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(limit, View.MeasureSpec.AT_MOST))
         }
     }.apply {
         isFillViewport = true
@@ -58,7 +60,7 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
         )
         content.addView(
             bodyScroll,
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = owner.dp(14) },
+            LinearLayout.LayoutParams(-1, -2, 1f).apply { topMargin = owner.dp(14) },
         )
         setContentView(content)
         window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -77,12 +79,21 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
     fun getButton(which: Int): Button = buttons.getValue(which)
 
     fun compactForm() {
-        // Unified into the shared PrettyDialog style; retained for source compatibility.
-        content.background = Theme.bordered(Theme.card, Theme.controlBorder, owner.dp(18).toFloat(), owner.dp(1))
-        content.setPadding(owner.dp(20), owner.dp(18), owner.dp(20), owner.dp(16))
+        content.setPadding(owner.dp(16), owner.dp(14), owner.dp(16), owner.dp(14))
+        heading.textSize = 20f
+        (bodyScroll.layoutParams as? LinearLayout.LayoutParams)?.topMargin = owner.dp(10)
+        actions.setPadding(0, owner.dp(12), 0, 0)
     }
 
-    fun body(view: View) {
+    fun body(view: View, scroll: Boolean = true) {
+        if (!scroll) {
+            val index = content.indexOfChild(bodyScroll)
+            content.removeViewAt(index)
+            content.addView(view, index, LinearLayout.LayoutParams(-1, -2, 1f).apply {
+                topMargin = owner.dp(10)
+            })
+            return
+        }
         bodyScroll.visibility = View.VISIBLE
         bodyContainer.addView(
             view,
@@ -130,7 +141,7 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
 
     override fun show() {
         super.show()
-        val width = (owner.resources.displayMetrics.widthPixels - owner.dp(40)).coerceIn(owner.dp(280), owner.dp(460))
+        val width = (owner.resources.displayMetrics.widthPixels - owner.dp(32)).coerceIn(1, owner.dp(460))
         window?.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
         window?.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         window?.setDimAmount(.68f)
@@ -140,6 +151,8 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
         private var title = ""
         private var message = ""
         private var body: View? = null
+        private var scrollBody = true
+        private var compact = false
         private var positive: Pair<String, ((DialogInterface, Int) -> Unit)?>? = null
         private var negative: Pair<String, ((DialogInterface, Int) -> Unit)?>? = null
         private var cancel: ((DialogInterface) -> Unit)? = null
@@ -148,7 +161,12 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
 
         fun setMessage(s: String) = apply { message = s }
 
-        fun setView(v: View) = apply { body = v }
+        fun setView(v: View, scroll: Boolean = true) = apply {
+            body = v
+            scrollBody = scroll
+        }
+
+        fun setCompact() = apply { compact = true }
 
         fun setPositiveButton(s: String, f: ((DialogInterface, Int) -> Unit)?) = apply {
             positive = s to f
@@ -183,7 +201,7 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
             val d = PrettyDialog(a)
             d.setTitle(title)
             d.setMessage(message)
-            body?.let { d.body(it) }
+            body?.let { d.body(it, scrollBody) }
             entries?.let { items ->
                 val list = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
                 items.forEachIndexed { index, text ->
@@ -212,6 +230,7 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
             negative?.let { d.action(-2, it.first, it.second) }
             positive?.let { d.action(-1, it.first, it.second) }
             if (positive != null || negative != null) d.content.addView(d.actions)
+            if (compact) d.compactForm()
             d.setOnCancelListener { cancel?.invoke(it) }
             return d
         }
