@@ -225,25 +225,32 @@ class MainActivity : Activity() {
         })
         val last = Store.lastLog()
         val tools = row().apply { setPadding(0, 0, 0, dp(8)) }
-        val periods = intArrayOf(4, 8, 16, 19, 26, 52)
-        val historyWeeks = Store.prefs.getInt("historyWeeksV2", 19)
+        val cardPadding = dp(10)
+        val periods = intArrayOf(0, 4, 8, 16, 26, 52)
+        val selectedPeriod = periods.indexOf(Store.prefs.getInt("historyWeeksV2", 0)).coerceAtLeast(0)
+        val historyWeeks = periods[selectedPeriod].takeIf { it > 0 } ?: 52
+        val historyPicker = ChoiceView(
+            this,
+            periods.map { if (it == 0) "Fit screen" else "$it weeks" }.toTypedArray(),
+            selectedPeriod,
+            pickerTitle = "Activity history",
+        ).apply {
+            onChange = {
+                Store.prefs.edit().putInt("historyWeeksV2", periods[selectedItemPosition]).apply()
+                render()
+            }
+        }
+        root.addOnLayoutChangeListener { _, left, _, right, _, _, _, _, _ ->
+            val graphWidth = right - left - root.paddingStart - root.paddingEnd - 2 * cardPadding
+            if (graphWidth > 0) {
+                val visible = HeatmapLayout.fit(graphWidth, resources.displayMetrics.density, historyWeeks).weeks
+                val label = if (visible == 1) "1 week" else "$visible weeks"
+                historyPicker.setDisplayedLabel(label)
+                historyPicker.contentDescription = "Activity history timeframe, $label"
+            }
+        }
         tools.addView(
-            ChoiceView(
-                    this,
-                    periods.map { "$it weeks" }.toTypedArray(),
-                    periods.indexOf(historyWeeks).coerceAtLeast(0),
-                    pickerTitle = "Activity history",
-                )
-                .apply {
-                    onChange = {
-                        Store.prefs
-                            .edit()
-                            .putInt("historyWeeksV2", periods[selectedItemPosition])
-                            .apply()
-                        render()
-                    }
-                    contentDescription = "Activity history timeframe"
-                },
+            historyPicker,
             LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(12) },
         )
         val redo = Store.lastRedo()
@@ -310,16 +317,21 @@ class MainActivity : Activity() {
                 LinearLayout(this).apply {
                     orientation = 1
                     background = Theme.bordered(Theme.card, Theme.cardBorder, dp(12).toFloat(), dp(1))
-                    setPadding(dp(12), dp(12), dp(12), dp(12))
+                    setPadding(cardPadding, cardPadding, cardPadding, cardPadding)
                     tag = h.id
                 }
             val top = row().apply { gravity = Gravity.TOP }
             top.addView(
                 LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
-                    setPadding(0, dp(6), dp(4), 0)
-                    addView(label(h.name, 19f).apply { typeface = Theme.semibold })
-                    addView(label(h.widgetTodayLabel(false), 13f, Theme.muted))
+                    setPadding(0, 0, dp(4), 0)
+                    addView(label(h.name, 19f).apply {
+                        typeface = Theme.semibold
+                        setPadding(0, 0, 0, 0)
+                    })
+                    addView(label(h.widgetTodayLabel(false), 13f, Theme.muted).apply {
+                        setPadding(0, dp(2), 0, 0)
+                    })
                 },
                 LinearLayout.LayoutParams(0, -2, 1f),
             )
@@ -430,7 +442,7 @@ class MainActivity : Activity() {
                         textSize = 12f
                         setTextColor(Theme.muted)
                     }
-                } else label(status, 12f, Theme.muted)
+                } else label(status, 12f, Theme.muted).apply { setPadding(0, dp(2), 0, 0) }
                 card.addView(statusView, LinearLayout.LayoutParams(-2, -2))
             } else {
                 val actions = row()

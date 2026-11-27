@@ -112,13 +112,6 @@ object Theme {
             setStroke(strokeWidthPx, stroke)
         }
 
-    fun centeredGraphInset(width: Int, density: Float): Int {
-        val cell = 14 * density
-        val gap = 3 * density
-        val columns = ((width + gap) / (cell + gap)).toInt().coerceIn(1, 52)
-        return ((width - (columns * (cell + gap) - gap)) / 2).toInt().coerceAtLeast(0)
-    }
-
     fun graph(
         h: Habit,
         weeks: Int,
@@ -129,15 +122,16 @@ object Theme {
         center: Boolean = false,
     ): Bitmap {
         val density = Store.context.resources.displayMetrics.density
-        val w = width.coerceIn(80, 1600)
+        val w = width.coerceAtLeast(1)
         val hh = height.coerceIn(60, 700)
         val bitmap = Bitmap.createBitmap(w, hh, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        val cell = 14f * density
-        val gap = 3f * density
+        val cell = HeatmapLayout.cellDp * density
+        val gap = HeatmapLayout.gapDp * density
         val radius = 2f * density
-        val visibleWeeks = minOf(weeks, maxOf(1, ((w + gap) / (cell + gap)).toInt()))
+        val layout = HeatmapLayout.fit(w, density, weeks)
+        val visibleWeeks = layout.weeks
         val today = LocalDate.parse(Dates.today())
         val accent = colors[h.color.coerceIn(colors.indices)]
         for (i in 0 until visibleWeeks * 7) {
@@ -156,9 +150,7 @@ object Theme {
                     (Color.green(base) * (1 - f) + Color.green(accent) * f).toInt(),
                     (Color.blue(base) * (1 - f) + Color.blue(accent) * f).toInt(),
                 )
-            val x =
-                i / 7 * (cell + gap) +
-                    if (center) (w - (visibleWeeks * (cell + gap) - gap)) / 2 else 0f
+            val x = i / 7 * (cell + gap) + if (center) layout.leftInset else 0f
             val y = i % 7 * (cell + gap)
             canvas.drawRoundRect(x, y, x + cell, y + cell, radius, radius, paint)
         }
@@ -310,7 +302,7 @@ class HeatmapView(
     private var bitmap: Bitmap? = null
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        if (w > 0 && h > 0) bitmap = Theme.graph(habit, weeks, w, h, binary = binary)
+        if (w > 0 && h > 0) bitmap = Theme.graph(habit, weeks, w, h, binary = binary, center = true)
     }
 
     override fun onDraw(canvas: Canvas) {

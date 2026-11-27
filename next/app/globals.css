@@ -411,6 +411,7 @@ h3 {
 .graph-area { margin: 24px 0 20px; }
 .graph-viewport { overflow: hidden; }
 .heatmap-fit { width: 100%; touch-action: manipulation; cursor: pointer; }
+.heatmap-fit > .heatmap { margin-inline: auto; }
 .heatmap-fit:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
 .log-history { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .activity footer { display: flex; flex-direction: row-reverse; align-items: center; justify-content: space-between; gap: 12px; }

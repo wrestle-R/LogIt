@@ -354,11 +354,14 @@ class ChoiceView(
     }
 
     private fun refreshLabel() {
-        val textValue = choices.getOrElse(selectedItemPosition) { "" }
-        labelView.text = textValue
+        setDisplayedLabel(choices.getOrElse(selectedItemPosition) { "" })
         val swatch = swatches?.getOrNull(selectedItemPosition) ?: Color.TRANSPARENT
         dot.visibility = if (swatch != Color.TRANSPARENT) View.VISIBLE else View.GONE
         if (swatch != Color.TRANSPARENT) dot.background = Theme.shape(swatch, a.dp(5).toFloat())
+    }
+
+    fun setDisplayedLabel(text: String) {
+        if (labelView.text.toString() != text) labelView.text = text
     }
 
     private fun openDropdown() {
