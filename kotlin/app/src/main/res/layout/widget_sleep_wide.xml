@@ -5,47 +5,58 @@
     android:background="@drawable/widget_bg"
     android:gravity="center_vertical"
     android:orientation="horizontal"
-    android:paddingStart="12dp"
-    android:paddingEnd="12dp"
-    android:paddingTop="8dp"
-    android:paddingBottom="8dp">
+    android:paddingHorizontal="14dp"
+    android:paddingVertical="8dp">
 
     <LinearLayout
-        android:layout_width="wrap_content"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginEnd="12dp"
-        android:minWidth="92dp"
+        android:layout_weight="2"
         android:orientation="vertical">
 
         <TextView
             android:id="@+id/sleep_widget_title"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:ellipsize="end"
             android:includeFontPadding="false"
             android:maxLines="1"
-            android:textSize="12sp"
-            android:textStyle="bold" />
+            android:textSize="12sp" />
 
         <TextView
             android:id="@+id/sleep_widget_duration"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="3dp"
+            android:ellipsize="end"
             android:includeFontPadding="false"
             android:maxLines="1"
             android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/sleep_widget_history"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:visibility="gone" />
     </LinearLayout>
 
-    <ImageView
-        android:id="@+id/sleep_widget_chart"
+    <LinearLayout
         android:layout_width="0dp"
-        android:layout_height="32dp"
-        android:layout_weight="1"
-        android:scaleType="fitXY" />
+        android:layout_height="wrap_content"
+        android:layout_weight="3"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/sleep_widget_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textSize="12sp" />
+
+        <ProgressBar
+            android:id="@+id/sleep_widget_progress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="4dp"
+            android:layout_marginTop="6dp"
+            android:progressDrawable="@drawable/sleep_widget_progress"
+            android:visibility="gone" />
+    </LinearLayout>
 </LinearLayout>

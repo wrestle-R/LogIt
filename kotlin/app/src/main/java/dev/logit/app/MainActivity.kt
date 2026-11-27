@@ -657,6 +657,7 @@ class MainActivity : Activity() {
         }
         if (Store.ready) {
             option("Statistics") { openDetails("statistics") }
+            option("Tracking") { openTracking("tracking") }
             option("Goal reminders") { openDetails("reminders") }
             option("Add a widget") { openDetails("widgets") }
         }

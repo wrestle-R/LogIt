@@ -100,7 +100,7 @@ class DetailsActivity : Activity() {
             Triple("Quick log", "Compact activity tiles for instant one-tap daily logging.", "quick"),
             Triple("Heatmap", "Recent weeks completion grid at a glance.", "graph"),
             Triple("Heatmap + log", "Completion grid with an overlaid + Log button.", "log"),
-        ) + if (sleepAvailable) listOf(Triple("Sleep", "Your latest sleep estimate and weekly history.", "sleep")) else emptyList()
+        ) + if (sleepAvailable) listOf(Triple("Sleep", "Your latest sleep and progress toward your goal.", "sleep")) else emptyList()
         items.forEachIndexed { index, (name, subtitle, kind) ->
             val card = panel().apply {
                 orientation = LinearLayout.HORIZONTAL

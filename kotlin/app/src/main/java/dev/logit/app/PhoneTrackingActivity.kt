@@ -26,7 +26,6 @@ import androidx.activity.ComponentActivity
 import androidx.core.widget.doAfterTextChanged
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
-import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -115,6 +114,7 @@ class PhoneTrackingActivity : ComponentActivity() {
             window.decorView.windowInsetsController?.setSystemBarsAppearance(if (Theme.light()) flags else 0, flags)
         }
         val title = when (screen) {
+            "tracking" -> "Tracking"
             "sleep" -> "Sleep"
             "limits" -> "Screen time"
             "health" -> "Health Connect"
@@ -128,6 +128,16 @@ class PhoneTrackingActivity : ComponentActivity() {
             }, LinearLayout.LayoutParams(dp(44), dp(48)))
             addView(label(title, 22f).apply { typeface = Theme.semibold },
                 LinearLayout.LayoutParams(0, -2, 1f))
+            if (screen == "sleep") {
+                val owner = Store.trackingOwner()
+                val settings = owner?.let(PhoneTracking::sleep)
+                if (owner != null && settings != null) {
+                    addView(quietAction("Settings") { sleepSettings(owner, settings) }.apply {
+                        minimumHeight = dp(44)
+                        contentDescription = "Sleep settings"
+                    }, LinearLayout.LayoutParams(-2, -2))
+                }
+            }
         })
 
         val owner = Store.trackingOwner()
@@ -136,7 +146,14 @@ class PhoneTrackingActivity : ComponentActivity() {
             return
         }
         when (screen) {
-            "sleep" -> showSleep(root, owner)
+            "tracking" -> {
+                showTracking(root, owner)
+                return
+            }
+            "sleep" -> {
+                showSleep(root, owner)
+                return
+            }
             "limits" -> showLimits(root, owner)
             "health" -> {
                 showHealth(root, owner)
@@ -312,7 +329,7 @@ class PhoneTrackingActivity : ComponentActivity() {
         val active = automatic && allowed
         addView(title(if (active) "Automatic tracking is on" else "Automatic tracking"))
         addView(label(if (active) "This phone measures usage locally." else
-            "Optional. Enable Usage Access on your primary phone to measure phone and app time.", 13f, Theme.muted))
+            "Enable Usage Access on your primary phone to measure phone and app time.", 13f, Theme.muted))
         if (active) {
             addAction("Pause automatic tracking") {
                 PhoneTracking.setAutomatic(owner, false)
@@ -335,102 +352,244 @@ class PhoneTrackingActivity : ComponentActivity() {
         }
     }
 
+    private fun showTracking(root: LinearLayout, owner: String) {
+        val sleep = PhoneTracking.sleep(owner)
+        root.addCard(card().apply {
+            addView(trackingRow("Sleep", sleep?.let { "${formatUsageMinutes(it.goalMinutes)} minimum" }
+                ?: "Set a sleep goal and view your nights") { openTracking("sleep") })
+            addView(trackingRow("Health Connect", "Import steps, workouts, and sleep") { openTracking("health") })
+            addView(trackingRow("App time rules", "Log an activity after using an app") { openTracking("apps") })
+            addView(trackingRow("Screen time limits", "Set daily limits for your phone or groups of apps") { openTracking("limits") })
+        })
+    }
+
+    private fun trackingRow(
+        heading: String,
+        detail: String,
+        trailing: String = "›",
+        trailingColor: Int = Theme.muted,
+        action: () -> Unit,
+    ) =
+        LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(52)
+            setPadding(0, dp(6), 0, dp(6))
+            background = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
+                null, Theme.shape(android.graphics.Color.WHITE, dp(8).toFloat()),
+            )
+            addView(form().apply {
+                addView(label(heading, 14f).apply { typeface = Theme.semibold })
+                addView(label(detail, 12f, Theme.muted))
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(label(trailing, if (trailing == "›") 19f else 15f, trailingColor).apply {
+                typeface = Theme.semibold
+                setPadding(dp(8), 0, 0, 0)
+                if (trailing == "›") importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            })
+            isFocusable = true
+            setOnClickListener { action() }
+        }
+
     private fun showSleep(root: LinearLayout, owner: String) {
         val settings = PhoneTracking.sleep(owner)
         val habit = Store.habits.find { it.id == settings?.activityId }
         if (settings == null || habit == null) {
             root.addCard(card().apply {
-                addView(title("Sleep tracking"))
-                addView(label("Keep a Sleep activity and record your bedtime and wake time. Choose automatic estimates if you want them.", 14f, Theme.muted))
-                if (!AndroidUsage.screenEventsSupported) {
-                    addView(label("Automatic sleep estimates require Android 9 or later. You can still enter sleep manually.", 13f, Theme.muted))
-                }
+                addView(title("Set a sleep goal"))
+                addView(label("See how long you slept. LogIt completes your Sleep activity on nights that reach your minimum.", 14f, Theme.muted))
                 addAction("Set up Sleep", true) { sleepSetup(owner, null) }
             })
             return
         }
+
         val today = LocalDate.parse(Dates.today())
-        val day = selectedDay ?: today
-        val recent = PhoneTracking.summary(owner, habit, day.toString())
+        val history = (0L..6L).map { offset ->
+            val date = today.minusDays(offset)
+            date to PhoneTracking.summary(owner, habit, date.toString())
+        }
+        val day = selectedDay ?: history.firstOrNull { it.second != null }?.first ?: today
+        val record = PhoneTracking.summary(owner, habit, day.toString())
+        val goal = formatUsageMinutes(settings.goalMinutes)
+        val dateLabel = DateTimeFormatter.ofPattern("EEE, d MMM")
+        val accent = sleepGoalColor()
         root.addCard(card().apply {
-            addView(title(if (day == today) "Last night" else day.format(DateTimeFormatter.ofPattern("EEE, d MMM"))))
-            addView(label(if (recent == null) "No sleep recorded" else
-                formatUsageMinutes(Duration.ofMillis(recent.wakeTime - recent.bedtime).toMinutes().toInt()), 26f))
-            if (recent != null) addView(label("${formatTime(recent.bedtime)} – ${formatTime(recent.wakeTime)}" + when {
-                recent.edited -> " · Edited"
-                recent.healthConnect -> " · Health Connect"
-                else -> " · Estimated from phone use"
-            }, 13f, Theme.muted))
-            else addView(label("Enter your sleep hours, or try an estimate from phone use.", 13f, Theme.muted))
-            addAction(if (recent == null) "Enter sleep" else "Edit sleep") { editNight(owner, habit, day, recent, settings.schedule) }
+            addView(label(if (day == today) "Last night" else day.format(dateLabel), 14f, Theme.muted))
+            if (record != null) {
+                addView(label(formatUsageMinutes(record.minutes), 34f).apply { typeface = Theme.semibold })
+                val reached = record.minutes >= settings.goalMinutes
+                addView(label(if (reached) "Goal met · $goal minimum" else "$goal minimum · ${formatUsageMinutes(settings.goalMinutes - record.minutes)} short",
+                    13f, if (reached) accent else Theme.muted))
+                addView(android.widget.ProgressBar(this@PhoneTrackingActivity, null,
+                    android.R.attr.progressBarStyleHorizontal).apply {
+                    max = settings.goalMinutes
+                    progress = record.minutes.coerceIn(0, max)
+                    progressTintList = android.content.res.ColorStateList.valueOf(accent)
+                    progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Theme.controlBorder)
+                    contentDescription = "${formatUsageMinutes(record.minutes)} of $goal"
+                }, LinearLayout.LayoutParams(-1, dp(5)).apply { topMargin = dp(9); bottomMargin = dp(6) })
+                val source = when {
+                    record.edited -> "Manual entry"
+                    record.healthConnect -> "Health Connect"
+                    else -> "Phone estimate"
+                }
+                addView(label("${formatTime(record.bedtime)} – ${formatTime(record.wakeTime)} · $source", 13f, Theme.muted))
+            } else {
+                addView(label("No sleep recorded", 22f).apply { typeface = Theme.semibold })
+                addView(label("Your Sleep activity logs when you reach $goal.", 13f, Theme.muted))
+            }
+            addAction(if (record == null) "Add sleep" else if (day != today && history.first().second == null)
+                "Add last night" else "Edit sleep", true) {
+                val addLatest = record != null && day != today && history.first().second == null
+                editNight(owner, habit, if (addLatest) today else day, if (addLatest) null else record, settings.schedule)
+            }
         })
 
         root.addCard(card().apply {
-            addView(title("Last 7 nights"))
-            for (offset in 0L..6L) {
-                val date = today.minusDays(offset)
-                val record = PhoneTracking.summary(owner, habit, date.toString())
-                val name = date.format(DateTimeFormatter.ofPattern("EEE, d MMM"))
-                val value = record?.let {
-                    formatUsageMinutes(Duration.ofMillis(it.wakeTime - it.bedtime).toMinutes().toInt())
-                } ?: "No entry"
-                addView(quietAction("$name · $value") {
-                    selectedDay = date
-                    val existing = PhoneTracking.summary(owner, habit, date.toString())
-                    editNight(owner, habit, date, existing, settings.schedule)
-                }.apply {
-                    gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                    setPadding(dp(8), dp(6), dp(8), dp(6))
-                    minHeight = dp(44)
-                    minimumHeight = dp(44)
-                }, LinearLayout.LayoutParams(-1, -2))
+            addView(title("Recent nights"))
+            val recorded = history.mapNotNull { (date, night) -> night?.let { date to it } }
+            if (recorded.isEmpty()) {
+                addView(label("Your nights will appear here as you add or import them.", 13f, Theme.muted))
             }
+            recorded.forEachIndexed { index, (date, night) ->
+                if (index > 0) addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)))
+                addView(trackingRow(date.format(dateLabel),
+                    "${formatTime(night.bedtime)} – ${formatTime(night.wakeTime)}",
+                    trailing = formatUsageMinutes(night.minutes),
+                    trailingColor = if (night.minutes >= settings.goalMinutes) accent else Theme.text,
+                ) { editNight(owner, habit, date, night, settings.schedule) })
+            }
+            addAction("Add or edit another night") { chooseSleepDate(owner, habit, settings, history) }
         })
-        root.addCard(card().apply {
-            addView(title("Usual sleep hours"))
-            addView(label("${settings.schedule.bedtime.format(timeLabel)} – ${settings.schedule.wakeTime.format(timeLabel)}", 14f, Theme.muted))
-            addAction("Change sleep hours") { sleepSetup(owner, settings) }
-            addAction("Add Sleep widget") { pinWidget() }
-            addAction("Turn off Sleep tracking") {
-                PhoneTracking.saveSleep(owner, null)
-                offerWidget = false
+        root.addCard(trackingRow("Add Sleep widget", "See your sleep goal on the home screen") { pinWidget() })
+    }
+
+    private fun chooseSleepDate(owner: String, habit: Habit, settings: SleepTracking,
+        recent: List<Pair<LocalDate, SleepSummary?>>) {
+        val dates = (recent.map { it.first } + habit.sleepSummaries.keys.mapNotNull {
+            runCatching { LocalDate.parse(it) }.getOrNull()
+        }).distinct().sortedDescending()
+        val format = DateTimeFormatter.ofPattern("EEE, d MMM yyyy")
+        val nights = dates.map { date -> PhoneTracking.summary(owner, habit, date.toString()) }
+        val labels = dates.zip(nights).map { (date, night) ->
+            "${date.format(format)} · ${night?.let { formatUsageMinutes(it.minutes) } ?: "Add entry"}"
+        }.toTypedArray()
+        PrettyDialog.Builder(this).setTitle("Choose a night").setItems(labels) { _, index ->
+            editNight(owner, habit, dates[index], nights[index], settings.schedule)
+        }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun sleepSettings(owner: String, settings: SleepTracking) {
+        val form = form()
+        lateinit var dialog: PrettyDialog
+        form.addView(trackingRow("Sleep goal", "${formatUsageMinutes(settings.goalMinutes)} minimum") {
+            dialog.dismiss()
+            sleepSetup(owner, settings)
+        })
+        form.addView(trackingRow("Sleep from Health Connect", "Import from a watch or another sleep app") {
+            dialog.dismiss()
+            openTracking("health")
+        })
+        form.addView(trackingRow("Usual bedtime and wake time",
+            "${settings.schedule.bedtime.format(timeLabel)} – ${settings.schedule.wakeTime.format(timeLabel)}") {
+            dialog.dismiss()
+            editSleepSchedule(owner, settings)
+        })
+        if (AndroidUsage.screenEventsSupported) {
+            val canEstimate = AndroidUsage.allowed(this) && PhoneTracking.automaticEnabled(owner)
+            val estimating = settings.estimateFromPhone && canEstimate
+            val detail = if (estimating) "On · uses overnight phone inactivity" else "Off · estimates from overnight phone inactivity"
+            form.addView(trackingRow("Phone sleep estimates", detail) {
+                dialog.dismiss()
+                PhoneTracking.saveSleep(owner, settings.copy(
+                    estimateFromPhone = !estimating,
+                    since = if (estimating) settings.since else System.currentTimeMillis(),
+                ))
+                if (!estimating) {
+                    if (!PhoneTracking.automaticEnabled(owner)) PhoneTracking.setAutomatic(owner, true)
+                    if (!AndroidUsage.allowed(this)) {
+                        runCatching { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+                            .onFailure { toast("Usage Access settings are unavailable on this device.") }
+                    }
+                }
                 render()
-            }
+            })
+        }
+        form.addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)))
+        form.addView(trackingRow("Stop Sleep tracking", "Turns off estimates and imports. Keeps your history.") {
+            dialog.dismiss()
+            PrettyDialog.Builder(this).setTitle("Stop Sleep tracking?")
+                .setMessage("Your sleep history and activity completions will stay.")
+                .setNegativeButton("Cancel", null).setPositiveButton("Stop tracking") { _, _ ->
+                    PhoneTracking.saveSleep(owner, null)
+                    offerWidget = false
+                    render()
+                }.show()
         })
+        dialog = PrettyDialog.Builder(this).setTitle("Sleep settings").setView(form)
+            .setPositiveButton("Done", null).create()
+        dialog.show()
+    }
+
+    private fun editSleepSchedule(owner: String, settings: SleepTracking) {
+        val form = form()
+        val bed = form.field("Usual bedtime (24-hour)", settings.schedule.bedtime.format(inputTime))
+        val wake = form.field("Usual wake time (24-hour)", settings.schedule.wakeTime.format(inputTime))
+        form.addView(label("Used for phone estimates.", 13f, Theme.muted))
+        val error = form.error()
+        showForm("Usual sleep hours", form, "Save hours") { dialog ->
+            val start = readTime(bed)
+            val end = readTime(wake)
+            if (start == null || end == null || overnightMinutes(start, end) !in 180..960) {
+                error.text = "Enter a window between 3 and 16 hours using HH:mm."
+                return@showForm
+            }
+            val schedule = SleepSchedule(start, end)
+            if (schedule != settings.schedule) {
+                PhoneTracking.saveSleep(owner, settings.copy(schedule = schedule, since = System.currentTimeMillis()))
+            }
+            dialog.dismiss()
+            render()
+        }
     }
 
     private fun sleepSetup(owner: String, settings: SleepTracking?) {
         val form = form()
         val initialName = intent.getStringExtra("activityName").orEmpty().ifBlank { "Sleep" }
-        val name = form.field("Activity name", initialName)
-        if (settings != null) hideField(form, name)
-        val schedule = settings?.schedule ?: SleepSchedule()
-        val bed = form.field("Usual bedtime (24-hour)", schedule.bedtime.format(inputTime))
-        val wake = form.field("Usual wake time (24-hour)", schedule.wakeTime.format(inputTime))
+        val name = if (settings == null) form.field("Activity name", initialName) else null
+        val initialGoal = settings?.goalMinutes ?: SleepTracking.defaultGoalMinutes
+        val hours = form.field("Minimum hours", (initialGoal / 60).toString(), number = true, maxLength = 2)
+        val minutes = form.field("Additional minutes", (initialGoal % 60).toString(), number = true, maxLength = 2)
+        form.addView(label("Shorter nights appear in your history. Your activity logs once when you meet the minimum.", 13f, Theme.muted))
         val error = form.error()
-        showForm(if (settings == null) "Set up Sleep" else "Sleep hours", form,
-            if (settings == null) "Enable Sleep" else "Save hours") { dialog ->
-            val start = readTime(bed)
-            val end = readTime(wake)
-            val hours = if (start != null && end != null) overnightMinutes(start, end) else 0
-            if (name.text.toString().isBlank() || start == null || end == null || hours !in 180..960) {
-                error.text = "Enter a name and sleep hours covering 3 to 16 hours. Use HH:mm for times."
+        showForm(if (settings == null) "Set up Sleep" else "Sleep goal", form,
+            if (settings == null) "Enable Sleep" else "Save goal") { dialog ->
+            val title = name?.text?.toString()?.trim().orEmpty()
+            val fullHours = hours.text.toString().toIntOrNull()
+            val extraMinutes = minutes.text.toString().toIntOrNull()
+            val goal = (fullHours ?: 0) * 60 + (extraMinutes ?: 0)
+            if (name != null && title.isBlank()) {
+                error.text = "Enter an activity name."
+                return@showForm
+            }
+            if (fullHours == null || extraMinutes == null || extraMinutes !in 0..59 || goal !in SleepTracking.goalRange) {
+                error.text = "Enter a goal between 1 and 16 hours. Minutes must be between 0 and 59."
                 return@showForm
             }
             val save: (String) -> Unit = { id ->
-                val since = if (settings?.schedule == SleepSchedule(start, end)) settings.since else System.currentTimeMillis()
-                PhoneTracking.saveSleep(owner, SleepTracking(id, SleepSchedule(start, end), since))
+                PhoneTracking.saveSleep(owner, settings?.copy(goalMinutes = goal) ?:
+                    SleepTracking(id, SleepSchedule(), System.currentTimeMillis(), goal, estimateFromPhone = false))
                 offerWidget = settings == null
                 dialog.dismiss()
                 render()
                 maybeOfferWidget()
             }
             val current = settings?.activityId ?: Store.habitsFor(owner)
-                .firstOrNull { it.name.equals(name.text.toString().trim(), ignoreCase = true) }?.id
+                .firstOrNull { it.name.equals(title, ignoreCase = true) }?.id
             if (current != null) save(current)
             else {
                 dialog.getButton(-1).isEnabled = false
-                Store.addActivity(name.text.toString().trim()) { id, problem ->
+                Store.addActivity(title) { id, problem ->
                     if (id != null && Store.trackingOwner() == owner) save(id)
                     else {
                         dialog.getButton(-1).isEnabled = true
@@ -447,7 +606,7 @@ class PhoneTrackingActivity : ComponentActivity() {
         if (PhoneTracking.sleep(owner) == null) return
         offerWidget = false
         PrettyDialog.Builder(this).setTitle("Add the Sleep widget?")
-            .setMessage("See your latest sleep estimate on your home screen.")
+            .setMessage("See your latest sleep and progress toward your goal.")
             .setNegativeButton("Later", null).setPositiveButton("Add widget") { _, _ -> pinWidget() }.show()
     }
 
@@ -474,6 +633,7 @@ class PhoneTrackingActivity : ComponentActivity() {
                 error.text = "Wake time must have already passed."
                 return@showForm
             }
+            selectedDay = day
             PhoneTracking.saveSummary(owner, habit.id, day.toString(), SleepSummary(from, to, edited = true))
             dialog.dismiss()
             render()
@@ -784,11 +944,6 @@ class PhoneTrackingActivity : ComponentActivity() {
             minimumHeight = dp(48)
             addView(this, LinearLayout.LayoutParams(-1, -2))
         }
-    }
-
-    private fun hideField(form: LinearLayout, input: EditText) {
-        form.getChildAt(form.indexOfChild(input) - 1).visibility = View.GONE
-        input.visibility = View.GONE
     }
 
     private fun LinearLayout.error() = label("", 13f, Theme.destructive).also { error ->

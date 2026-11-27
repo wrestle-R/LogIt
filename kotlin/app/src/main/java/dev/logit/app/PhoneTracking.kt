@@ -38,7 +38,18 @@ internal data class ScreenLimit(
     }
 }
 
-internal data class SleepTracking(val activityId: String, val schedule: SleepSchedule, val since: Long)
+internal data class SleepTracking(
+    val activityId: String,
+    val schedule: SleepSchedule,
+    val since: Long,
+    val goalMinutes: Int = defaultGoalMinutes,
+    val estimateFromPhone: Boolean = true,
+) {
+    companion object {
+        const val defaultGoalMinutes = 480
+        val goalRange = 60..960
+    }
+}
 internal data class ScreenReading(val minutes: Int, val day: String)
 
 internal object PhoneTracking {
@@ -69,6 +80,9 @@ internal object PhoneTracking {
                     runCatching { LocalTime.parse(value.optString("bedtime")) }.getOrDefault(LocalTime.of(23, 0)),
                     runCatching { LocalTime.parse(value.optString("wake")) }.getOrDefault(LocalTime.of(7, 0)),
                 ), value.optLong("since"),
+                value.optInt("goalMinutes", SleepTracking.defaultGoalMinutes)
+                    .takeIf { minutes -> minutes in SleepTracking.goalRange } ?: SleepTracking.defaultGoalMinutes,
+                value.optBoolean("estimateFromPhone", true),
             )
         }
     }
@@ -81,6 +95,7 @@ internal object PhoneTracking {
         } else {
             editor.putString(key(owner, "sleep"), JSONObject()
                 .put("activity", settings.activityId).put("since", settings.since)
+                .put("goalMinutes", settings.goalMinutes).put("estimateFromPhone", settings.estimateFromPhone)
                 .put("bedtime", settings.schedule.bedtime.toString()).put("wake", settings.schedule.wakeTime.toString())
                 .toString())
         }
@@ -153,7 +168,7 @@ internal object PhoneTracking {
     fun schedule() {
         val owner = Store.trackingOwner()
         val manager = WorkManager.getInstance(Store.context)
-        if (owner == null || !automaticEnabled(owner) || (sleep(owner) == null && appRules(owner).isEmpty() && limits(owner).isEmpty())) {
+        if (owner == null || !automaticEnabled(owner) || (sleep(owner)?.estimateFromPhone != true && appRules(owner).isEmpty() && limits(owner).isEmpty())) {
             manager.cancelUniqueWork(periodicWork)
             manager.cancelUniqueWork(refreshWork)
             return
@@ -165,7 +180,7 @@ internal object PhoneTracking {
 
     fun refresh() {
         val owner = Store.trackingOwner() ?: return
-        if (!automaticEnabled(owner) || (sleep(owner) == null && appRules(owner).isEmpty() && limits(owner).isEmpty())) return
+        if (!automaticEnabled(owner) || (sleep(owner)?.estimateFromPhone != true && appRules(owner).isEmpty() && limits(owner).isEmpty())) return
         WorkManager.getInstance(Store.context).enqueueUniqueWork(refreshWork, ExistingWorkPolicy.KEEP,
             OneTimeWorkRequestBuilder<PhoneUsageWorker>().build())
     }
@@ -185,7 +200,7 @@ internal object PhoneTracking {
     fun run(context: Context) = synchronized(processing) {
         val owner = Store.trackingOwner() ?: return@synchronized
         if (!automaticEnabled(owner)) return@synchronized
-        val sleep = sleep(owner)
+        val sleep = sleep(owner)?.takeIf { it.estimateFromPhone }
         val rules = appRules(owner)
         val limits = limits(owner)
         if (sleep == null && rules.isEmpty() && limits.isEmpty()) return@synchronized
@@ -288,10 +303,17 @@ internal object PhoneTracking {
             .put("bed", value.bedtime).put("wake", value.wakeTime).put("edited", value.edited)
             .put("healthConnect", value.healthConnect))
         if (!Store.prefs.edit().putString(key(owner, "pending-sleep:$id"), saved.toString()).commit()) return
-        enqueueLog(owner, id, day)
         syncSummaries(owner, id)
         updated?.invoke()
         SleepWidget.refresh(Store.context)
+    }
+
+    private fun enqueueSleepGoal(owner: String, id: String, day: String, summary: SleepSummary): Boolean {
+        val settings = sleep(owner)?.takeIf { it.activityId == id } ?: return true
+        if (summary.minutes < settings.goalMinutes) return true
+        var queued = false
+        Store.logAutomatic(id, day, owner) { queued = it == null }
+        return queued
     }
 
     private fun syncSummaries(owner: String, id: String) {
@@ -301,13 +323,16 @@ internal object PhoneTracking {
             val value = pendingSummary(owner, id, day) ?: continue
             val operation = "$owner:$id:$day"
             if (!inFlightSleep.add(operation)) continue
+            // Queue offline first. A pending summary can safely retry the same daily log after a restart.
+            if (!enqueueSleepGoal(owner, id, day, value)) {
+                inFlightSleep.remove(operation)
+                continue
+            }
             Store.saveSleepSummary(id, day, value, owner) { problem ->
                 inFlightSleep.remove(operation)
                 if (problem == null && pendingSummary(owner, id, day) == value) {
                     val saved = pending(owner, id).apply { remove(day) }
                     Store.prefs.edit().putString(key(owner, "pending-sleep:$id"), saved.toString()).commit()
-                    // Also retry logging after interruption between persisting the summary and enqueuing the log.
-                    enqueueLog(owner, id, day)
                     SleepWidget.refresh(Store.context)
                     updated?.invoke()
                 }

@@ -26,6 +26,8 @@ data class SleepSummary(
     val edited: Boolean = false,
     val healthConnect: Boolean = false,
 ) {
+    internal val minutes: Int get() = ((wakeTime - bedtime) / 60_000L).toInt()
+
     internal fun fields() = mapOf(
         "bedtime" to bedtime, "wakeTime" to wakeTime, "edited" to edited, "healthConnect" to healthConnect,
     )
