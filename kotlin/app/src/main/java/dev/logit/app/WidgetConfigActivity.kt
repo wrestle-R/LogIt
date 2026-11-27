@@ -138,23 +138,42 @@ class WidgetConfigActivity : Activity() {
         val selected = (draftIds ?: Widgets.selectedIds(old)).toSet()
         val boxes = mutableListOf<CheckBox>()
         var updatePreview: () -> Unit = {}
-        val activityList = column().apply { setPadding(0, dp(6), 0, dp(6)) }
-        root.addView(activityList)
+        val activityList = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = Theme.bordered(Theme.card, Theme.cardBorder, dp(12).toFloat(), dp(1))
+        }
+        root.addView(activityList, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(8)
+            bottomMargin = dp(8)
+        })
         habits.forEachIndexed { index, h ->
+            if (index > 0) activityList.addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)).apply {
+                marginStart = dp(14)
+                marginEnd = dp(14)
+            })
             val check =
                 CheckBox(this).apply {
                     text = h.name
                     textSize = 15f
+                    typeface = Theme.regular
+                    includeFontPadding = false
+                    gravity = Gravity.START or Gravity.CENTER_VERTICAL
                     setTextColor(Theme.text)
-                    buttonTintList = ColorStateList.valueOf(Theme.text)
+                    buttonDrawable = null
+                    setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.widget_activity_checkbox, 0, 0, 0)
+                    compoundDrawableTintList = ColorStateList.valueOf(Theme.text)
+                    compoundDrawablePadding = dp(12)
                     minHeight = dp(48)
-                    setPadding(dp(12), dp(4), dp(12), dp(4))
-                    background = Theme.bordered(Theme.card, Theme.cardBorder, dp(12).toFloat(), dp(1))
+                    setPaddingRelative(dp(14), dp(10), dp(14), dp(10))
+                    background = android.graphics.drawable.RippleDrawable(
+                        ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
+                        null, Theme.shape(Color.WHITE, 0f),
+                    )
                     isChecked = if (draftIds == null && existing == null && selected.isEmpty()) index == 0 else h.id in selected
                     setOnCheckedChangeListener { _, _ -> updatePreview() }
                 }
             boxes.add(check)
-            activityList.addView(check, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+            activityList.addView(check, LinearLayout.LayoutParams(-1, -2))
         }
         fun select(title: String, options: Array<String>, initial: Int, swatches: IntArray? = null): ChoiceView {
             root.addView(label(title, 12f, Theme.muted).apply {

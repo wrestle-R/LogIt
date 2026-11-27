@@ -68,95 +68,32 @@ fun Activity.editActivity(
     fields.addView(name, LinearLayout.LayoutParams(-1, -2))
     fields.addView(nameError)
 
-    val periods = arrayOf("No goal", "Every day", "Every week")
     val values = listOf("none", "daily", "weekly")
-    var selected = values.indexOf(habit?.goal?.period).coerceAtLeast(0)
-
-    val segmentTrack = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
-        setPadding(dp(3), dp(3), dp(3), dp(3))
-    }
-    val segmentButtons = mutableListOf<TextView>()
-
-    val amountLabel = fieldLabel("", topDp = 14)
+    val goalChoice = ChoiceView(
+        this,
+        arrayOf("No goal", "Every day", "Every week"),
+        values.indexOf(habit?.goal?.period).coerceAtLeast(0),
+        pickerTitle = "How often?",
+    )
+    val amountLabel = fieldLabel("", topDp = 12)
     val amountError = inlineErrorLabel()
-    val amountContainer = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
-    }
-    val amount = EditText(this).apply {
-        hint = "1"
-        setText(habit?.goal?.target?.toString() ?: "1")
-        inputType = InputType.TYPE_CLASS_NUMBER
-        setSingleLine()
+    val amount = input("1", habit?.goal?.target?.toString() ?: "1", InputType.TYPE_CLASS_NUMBER).apply {
         filters = arrayOf(InputFilter.LengthFilter(3))
-        gravity = Gravity.CENTER
-        textSize = 15f
-        typeface = Theme.semibold
-        setTextColor(Theme.text)
-        setHintTextColor(Theme.muted)
-        background = null
-        setPadding(dp(8), 0, dp(8), 0)
         imeOptions = EditorInfo.IME_ACTION_DONE
-        contentDescription = "Goal target logs"
-        applyMonochromeCursor(this)
     }
-    fun stepperButton(symbol: String, description: String, step: Int) = quietAction(symbol) {
-        val current = amount.text.toString().toIntOrNull() ?: 1
-        val next = (current + step).coerceIn(1, 999)
-        amount.setText(next.toString())
-        amount.setSelection(amount.text.length)
-        amountError.visibility = View.GONE
-        amountContainer.background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
-    }.apply {
-        textSize = 19f
-        setTextColor(Theme.text)
-        gravity = Gravity.CENTER
-        setPadding(0, 0, 0, 0)
-        contentDescription = description
-    }
-    amountContainer.addView(stepperButton("−", "Decrease goal logs", -1), LinearLayout.LayoutParams(dp(48), dp(46)))
-    amountContainer.addView(themedDivider(), LinearLayout.LayoutParams(dp(1), dp(24)))
-    amountContainer.addView(amount, LinearLayout.LayoutParams(0, dp(46), 1f))
-    amountContainer.addView(themedDivider(), LinearLayout.LayoutParams(dp(1), dp(24)))
-    amountContainer.addView(stepperButton("+", "Increase goal logs", 1), LinearLayout.LayoutParams(dp(48), dp(46)))
 
-    fun refreshSegments() {
-        segmentButtons.forEachIndexed { index, tab ->
-            val active = index == selected
-            tab.isSelected = active
-            tab.background = if (active) Theme.shape(Theme.text, dp(7).toFloat()) else null
-            tab.setTextColor(if (active) Theme.bg else Theme.muted)
-            tab.typeface = if (active) Theme.semibold else Theme.regular
-            if (android.os.Build.VERSION.SDK_INT >= 30) {
-                tab.stateDescription = if (active) "Selected" else "Not selected"
-            }
-        }
-        amountLabel.text = if (selected == 1) "Logs per day" else "Logs per week"
-        val visible = if (selected == 0) View.GONE else View.VISIBLE
-        amountLabel.visibility = visible
-        amountContainer.visibility = visible
+    fun refreshGoal() {
+        val selected = goalChoice.selectedItemPosition
+        val label = if (selected == 1) "Logs per day" else "Logs per week"
+        amountLabel.text = label
+        amount.contentDescription = label
+        val visibility = if (selected == 0) View.GONE else View.VISIBLE
+        amountLabel.visibility = visibility
+        amount.visibility = visibility
         if (selected == 0) amountError.visibility = View.GONE
         name.imeOptions = if (selected == 0) EditorInfo.IME_ACTION_DONE else EditorInfo.IME_ACTION_NEXT
     }
-
-    periods.forEachIndexed { index, title ->
-        val tab = quietAction(title) {
-            selected = index
-            refreshSegments()
-        }.apply {
-            textSize = 13f
-            minHeight = dp(40)
-            minimumHeight = dp(40)
-            gravity = Gravity.CENTER
-            setPadding(dp(6), 0, dp(6), 0)
-            contentDescription = "Goal frequency: $title"
-        }
-        segmentButtons.add(tab)
-        segmentTrack.addView(tab, LinearLayout.LayoutParams(0, dp(40), 1f))
-    }
+    goalChoice.onChange = ::refreshGoal
 
     name.addTextChangedListener(object : TextWatcher {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -173,7 +110,7 @@ fun Activity.editActivity(
         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
             if (amountError.visibility == View.VISIBLE) {
                 amountError.visibility = View.GONE
-                amountContainer.background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
+                amount.background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
             }
         }
         override fun afterTextChanged(s: Editable?) {}
@@ -190,7 +127,7 @@ fun Activity.editActivity(
             background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
             val value = "${formatUsageMinutes(sleep.goalMinutes)} minimum"
             addView(label(value, 14f), LinearLayout.LayoutParams(0, -2, 1f))
-            addView(label("Edit ›", 13f, Theme.muted))
+            addView(label("Edit", 13f, Theme.muted))
             contentDescription = "Edit Sleep goal, $value"
             isFocusable = true
             setOnClickListener {
@@ -200,42 +137,60 @@ fun Activity.editActivity(
             }
         }, LinearLayout.LayoutParams(-1, -2))
     }
-    val frequencyLabel = if (sleep == null) "Goal frequency" else "Additional logging goal"
-    fields.addView(fieldLabel(frequencyLabel, topDp = if (habit == null || sleep != null) 14 else 0))
-    fields.addView(segmentTrack, LinearLayout.LayoutParams(-1, -2))
+    fields.addView(fieldLabel(if (sleep == null) "Goal (optional)" else "Logging goal (optional)", topDp = 16))
+    fields.addView(goalChoice, LinearLayout.LayoutParams(-1, dp(48)))
     fields.addView(amountLabel)
-    fields.addView(amountContainer, LinearLayout.LayoutParams(-1, -2))
+    fields.addView(amount, LinearLayout.LayoutParams(-1, -2))
     fields.addView(amountError)
-    refreshSegments()
+    refreshGoal()
 
     if (habit == null && onCreated == null) {
-        fields.addView(fieldLabel("Set up automatic tracking", topDp = 12))
-        val routes = listOf("Health Connect" to "health", "Sleep" to "sleep", "App use" to "apps", "Screen time" to "limits")
-        for (pair in routes.chunked(2)) {
-            val shortcuts = LinearLayout(this)
-            for ((title, route) in pair) {
-                val shortcut = quietAction("$title ›") {
-                    dialog.dismiss()
-                    openTracking(route, activityName = name.text.toString().trim())
-                }.apply {
-                    contentDescription = title
-                    setTextColor(Theme.text)
-                    gravity = Gravity.CENTER
-                    setPadding(dp(8), dp(6), dp(8), dp(6))
-                    minHeight = dp(48)
-                    minimumHeight = dp(48)
+        fields.addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(16) })
+        fields.addView(quietAction("Set up automatic tracking") {
+            val choices = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val picker = PrettyDialog.Builder(this)
+                .setTitle("Automatic tracking")
+                .setView(choices)
+                .setNegativeButton("Back", null)
+                .setCompact()
+                .create()
+            val routes = listOf(
+                Triple("App use", "Log when you open an app or use it for a set time.", "apps"),
+                Triple("Screen time", "Log days you stay under a screen time limit.", "limits"),
+                Triple("Sleep", "Log nights that meet your sleep goal.", "sleep"),
+                Triple("Health Connect", "Log steps, workouts, or sleep from health data.", "health"),
+            )
+            routes.forEachIndexed { index, (title, detail, route) ->
+                if (index > 0) choices.addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)))
+                choices.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    minimumHeight = dp(56)
+                    setPadding(dp(4), dp(10), dp(4), dp(10))
+                    isFocusable = true
                     background = RippleDrawable(
                         ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
-                        Theme.bordered(Theme.track, Theme.controlBorder, dp(9).toFloat(), dp(1)),
-                        null,
+                        null, Theme.shape(android.graphics.Color.WHITE, dp(8).toFloat()),
                     )
-                }
-                shortcuts.addView(shortcut, LinearLayout.LayoutParams(0, -1, 1f).apply {
-                    if (shortcuts.childCount > 0) marginStart = dp(6)
-                })
+                    addView(label(title, 15f).apply {
+                        typeface = Theme.semibold
+                        setPadding(0, 0, 0, 0)
+                    })
+                    addView(label(detail, 13f, Theme.muted).apply { setPadding(0, dp(2), 0, 0) })
+                    setOnClickListener {
+                        picker.dismiss()
+                        dialog.dismiss()
+                        openTracking(route, activityName = name.text.toString().trim())
+                    }
+                }, LinearLayout.LayoutParams(-1, -2))
             }
-            fields.addView(shortcuts, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
-        }
+            picker.show()
+        }.apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setPadding(dp(4), 0, dp(4), 0)
+            textSize = 14f
+            typeface = Theme.semibold
+            setTextColor(Theme.text)
+        }, LinearLayout.LayoutParams(-1, -2))
     }
     val action = when {
         onCreated != null -> "Create & select"
@@ -244,11 +199,10 @@ fun Activity.editActivity(
     }
     dialog = PrettyDialog.Builder(this)
         .setTitle(if (onCreated != null) "Create activity" else if (habit == null) "New activity" else "Edit activity")
-        .apply { if (habit == null && onCreated == null) setMessage("A goal is optional. You can change it anytime.") }
         .setView(fields)
         .setNegativeButton("Cancel", null)
         .setPositiveButton(action, null)
-        .apply { if (onCreated != null) setCompact() }
+        .setCompact()
         .create()
 
     var saving = false
@@ -262,11 +216,12 @@ fun Activity.editActivity(
             name.requestFocus()
             return
         }
+        val selected = goalChoice.selectedItemPosition
         val target = amount.text.toString().toIntOrNull()
         if (selected != 0 && (target == null || target !in 1..999)) {
             amountError.text = "Enter a number from 1 to 999"
             amountError.visibility = View.VISIBLE
-            amountContainer.background = Theme.bordered(Theme.bg, Theme.destructive, dp(10).toFloat(), dp(1))
+            amount.background = Theme.bordered(Theme.bg, Theme.destructive, dp(10).toFloat(), dp(1))
             amount.requestFocus()
             return
         }
@@ -295,7 +250,7 @@ fun Activity.editActivity(
 
     name.setOnEditorActionListener { _, actionId, _ ->
         if (actionId == EditorInfo.IME_ACTION_DONE) { submit(); true }
-        else if (actionId == EditorInfo.IME_ACTION_NEXT && selected != 0) { amount.requestFocus(); true }
+        else if (actionId == EditorInfo.IME_ACTION_NEXT && goalChoice.selectedItemPosition != 0) { amount.requestFocus(); true }
         else false
     }
     amount.setOnEditorActionListener { _, actionId, _ ->
@@ -303,6 +258,13 @@ fun Activity.editActivity(
     }
     dialog.setOnShowListener {
         val save = dialog.getButton(-1)
+        dialog.getButton(-2).apply {
+            background = RippleDrawable(
+                ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
+                null, Theme.shape(android.graphics.Color.WHITE, dp(10).toFloat()),
+            )
+            setTextColor(Theme.muted)
+        }
         save.setOnClickListener { submit() }
         if (habit == null) {
             fun updateSave() {

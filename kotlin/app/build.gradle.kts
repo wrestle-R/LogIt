@@ -3,7 +3,7 @@ if (file("google-services.json").exists()) { apply(plugin = "com.google.gms.goog
 android {
  namespace = "dev.logit.app"
  compileSdk = 36
- defaultConfig { applicationId = "com.romeiro.logit"; minSdk = 26; targetSdk = 36; versionCode = 18; versionName = "0.4.1"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+ defaultConfig { applicationId = "com.romeiro.logit"; minSdk = 26; targetSdk = 36; versionCode = 19; versionName = "0.4.2"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
 dependencies {

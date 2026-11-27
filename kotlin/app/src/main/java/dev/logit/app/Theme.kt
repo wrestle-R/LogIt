@@ -188,6 +188,22 @@ fun Activity.column() =
         setBackgroundColor(Theme.bg)
     }
 
+fun Activity.iconAction(resource: Int, description: String, bordered: Boolean = false, action: () -> Unit) =
+    ImageButton(this).apply {
+        setImageResource(resource)
+        setColorFilter(Theme.text)
+        contentDescription = description
+        tooltipText = description
+        scaleType = ImageView.ScaleType.CENTER
+        setPadding(0, 0, 0, 0)
+        background = android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
+            if (bordered) Theme.bordered(Theme.card, Theme.controlBorder, dp(22).toFloat(), dp(1)) else null,
+            Theme.shape(Color.WHITE, dp(22).toFloat()),
+        )
+        setOnClickListener { action() }
+    }
+
 fun Activity.themedDivider() =
     View(this).apply {
         setBackgroundColor(Theme.divider)

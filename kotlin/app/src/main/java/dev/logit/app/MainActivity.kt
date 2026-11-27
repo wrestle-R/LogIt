@@ -172,7 +172,11 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(8) },
         )
         header.addView(
-            label("LogIt", 22f).apply { typeface = Theme.semibold },
+            label("LogIt", 22f).apply {
+                typeface = Theme.semibold
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            },
             LinearLayout.LayoutParams(0, -2, 1f),
         )
         header.addView(
@@ -184,11 +188,14 @@ class MainActivity : Activity() {
                 Widgets.refresh(this)
                 render()
             },
-            LinearLayout.LayoutParams(dp(80), dp(48)),
+            LinearLayout.LayoutParams(dp(80), dp(44)),
         )
-        val more = icon("⋯", "More options", bordered = true) {}
-        more.setOnClickListener { settings() }
-        header.addView(more, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(8) })
+        if (Store.ready) {
+            val more = icon("⋯", "Settings", bordered = true) { settings() }
+            header.addView(more, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(6) })
+            val signOut = iconAction(R.drawable.ic_sign_out, "Sign out", bordered = true) { confirmSignOut() }
+            header.addView(signOut, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(6) })
+        }
         root.addView(header)
         AppUpdates.availableVersion(this)?.let { version -> addUpdateBanner(root, version) }
         if (!Store.ready) {
@@ -320,17 +327,19 @@ class MainActivity : Activity() {
                     setPadding(cardPadding, cardPadding, cardPadding, cardPadding)
                     tag = h.id
                 }
-            val top = row().apply { gravity = Gravity.TOP }
+            val top = row()
             top.addView(
                 LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(0, 0, dp(4), 0)
                     addView(label(h.name, 19f).apply {
                         typeface = Theme.semibold
+                        includeFontPadding = false
                         setPadding(0, 0, 0, 0)
                     })
                     addView(label(h.widgetTodayLabel(false), 13f, Theme.muted).apply {
-                        setPadding(0, dp(2), 0, 0)
+                        includeFontPadding = false
+                        setPadding(0, dp(3), 0, 0)
                     })
                 },
                 LinearLayout.LayoutParams(0, -2, 1f),
@@ -347,6 +356,8 @@ class MainActivity : Activity() {
             val grip =
                 label("⠿", 24f, Theme.muted).apply {
                     gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setPadding(0, 0, 0, 0)
                     contentDescription = "Hold and drag ${h.name} to reorder"
                     tooltipText = "Hold and drag to reorder"
                     setOnLongClickListener {
@@ -359,7 +370,7 @@ class MainActivity : Activity() {
                         true
                     }
                 }
-            top.addView(grip, LinearLayout.LayoutParams(dp(36), dp(44)))
+            top.addView(grip, LinearLayout.LayoutParams(dp(44), dp(44)))
             card.addView(top)
             card.setOnDragListener { _, event ->
                 when (event.action) {
@@ -408,7 +419,8 @@ class MainActivity : Activity() {
                     }
                 },
                 LinearLayout.LayoutParams(-1, dp(116)).apply {
-                    bottomMargin = dp(2)
+                    topMargin = dp(5)
+                    bottomMargin = dp(5)
                 },
             )
             if (automated) {
@@ -435,14 +447,18 @@ class MainActivity : Activity() {
                     else -> "Waiting for today’s data"
                 }
                 val statusView = if (needsHealthAccess || needsUsageAccess || isPaused) {
-                    quietAction("$status ›") { openTracking(route, h.id) }.apply {
+                    quietAction(status) { openTracking(route, h.id) }.apply {
                         gravity = Gravity.START or Gravity.CENTER_VERTICAL
                         minimumHeight = dp(44)
                         setPadding(0, dp(4), 0, dp(4))
                         textSize = 12f
+                        paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
                         setTextColor(Theme.muted)
                     }
-                } else label(status, 12f, Theme.muted).apply { setPadding(0, dp(2), 0, 0) }
+                } else label(status, 12f, Theme.muted).apply {
+                    includeFontPadding = false
+                    setPadding(0, 0, 0, 0)
+                }
                 card.addView(statusView, LinearLayout.LayoutParams(-2, -2))
             } else {
                 val actions = row()
@@ -564,7 +580,6 @@ class MainActivity : Activity() {
                     addView(subRow, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
                 }
                 addView(textCol, LinearLayout.LayoutParams(0, -2, 1f))
-                if (!destructive) addView(label("›", 18f, Theme.muted).apply { setPadding(dp(8), 0, 0, 0) })
                 setOnClickListener {
                     dialog.dismiss()
                     action()
@@ -686,65 +701,55 @@ class MainActivity : Activity() {
     private fun add() = editActivity()
 
     private fun settings() {
-        val menu = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        val dialog = PrettyDialog.Builder(this).setTitle("Settings").setCompact()
-            .setView(menu).setNegativeButton("Close", null).create()
-        fun option(title: String, color: Int = Theme.text, badgeColor: Int? = null, action: () -> Unit) {
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                minimumHeight = dp(48)
-                setPadding(dp(12), dp(6), dp(12), dp(6))
-                background = android.graphics.drawable.RippleDrawable(
-                    android.content.res.ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
-                    null, Theme.shape(Color.WHITE, dp(8).toFloat()),
-                )
-                isClickable = true
-                isFocusable = true
-                addView(label(title, 15f, color).apply {
-                    setPadding(0, 0, 0, 0)
-                }, LinearLayout.LayoutParams(0, -2, 1f))
-                badgeColor?.let {
-                    addView(View(this@MainActivity).apply {
-                        background = Theme.shape(it, dp(4).toFloat())
-                    }, LinearLayout.LayoutParams(dp(8), dp(8)))
-                }
-                setOnClickListener {
-                    dialog.dismiss()
-                    action()
-                }
-            }
-            menu.addView(row, LinearLayout.LayoutParams(-1, -2))
-        }
-        if (Store.ready) {
-            option("Statistics") { openDetails("statistics") }
-            option("Tracking") { openTracking("tracking") }
-            option("Goal reminders") { openDetails("reminders") }
-            option("Widgets") { openDetails("widgets") }
-            option("Introduction") {
-                Introduction.start()
-                dashboardScroll?.scrollTo(0, 0)
-                render()
-            }
-        }
-        val updateDot = if (AppUpdates.cachedUpdate(this)) Theme.colors[0] else null
-        option("Check for updates", badgeColor = updateDot) { AppUpdates.show(this) }
-        if (Store.ready) {
-            menu.addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)).apply {
-                topMargin = dp(4)
-                bottomMargin = dp(4)
-                marginStart = dp(8)
-                marginEnd = dp(8)
+        val menu = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val dialog = PrettyDialog.Builder(this).setView(menu).setCompact().create()
+        menu.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), 0, 0, 0)
+            addView(label("Settings", 21f).apply {
+                typeface = Theme.semibold
+                setPadding(0, 0, 0, 0)
+                if (android.os.Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(iconAction(R.drawable.ic_close, "Close settings") { dialog.dismiss() },
+                LinearLayout.LayoutParams(dp(44), dp(44)))
+        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) })
+
+        val options = listOf<Pair<String, () -> Unit>>(
+            "Statistics" to { openDetails("statistics") },
+            "Tracking" to { openTracking("tracking") },
+            "Goal reminders" to { openDetails("reminders") },
+            "Widgets" to { openDetails("widgets") },
+        )
+        options.forEachIndexed { index, (title, action) ->
+            if (index > 0) menu.addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)).apply {
+                marginStart = dp(12)
+                marginEnd = dp(12)
             })
-            option("Sign out", color = Theme.destructive) {
+            menu.addView(quietAction(title) {
+                dialog.dismiss()
+                action()
+            }.apply {
+                gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                minimumHeight = dp(48)
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                setTextColor(Theme.text)
+                textSize = 15f
+            }, LinearLayout.LayoutParams(-1, -2))
+        }
+        dialog.show()
+    }
+
+    private fun confirmSignOut() {
+        PrettyDialog.Builder(this)
+            .setTitle("Sign out?")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Sign out") { _, _ ->
                 if (Store.demo) Store.leaveDemo() else Store.auth.signOut()
                 GoalReminders.schedule(this)
                 render()
             }
-        }
-        dialog.show()
+            .show()
     }
 
     private fun openDetails(screen: String) =

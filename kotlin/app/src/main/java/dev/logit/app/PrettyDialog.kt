@@ -28,6 +28,7 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
         }
     private val message = owner.label("", 15f, Theme.muted).apply {
         setPadding(0, 0, 0, 0)
+        visibility = View.GONE
     }
     private val bodyContainer = LinearLayout(owner).apply {
         orientation = LinearLayout.VERTICAL
@@ -74,6 +75,7 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
 
     override fun setTitle(title: CharSequence?) {
         heading.text = title
+        heading.visibility = if (title.isNullOrBlank()) View.GONE else View.VISIBLE
     }
 
     fun setMessage(text: String) {
@@ -86,7 +88,8 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
     fun compactForm() {
         content.setPadding(owner.dp(16), owner.dp(14), owner.dp(16), owner.dp(14))
         heading.textSize = 20f
-        (bodyScroll.layoutParams as? LinearLayout.LayoutParams)?.topMargin = owner.dp(10)
+        (bodyScroll.layoutParams as? LinearLayout.LayoutParams)?.topMargin =
+            if (heading.visibility == View.VISIBLE || message.visibility == View.VISIBLE) owner.dp(10) else 0
         actions.setPadding(0, owner.dp(12), 0, 0)
     }
 
