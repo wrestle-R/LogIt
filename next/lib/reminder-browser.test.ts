@@ -18,7 +18,7 @@ test("open-tab reminders send once for an unmet goal and skip completed goals", 
     Object.entries(replacements).forEach(([key, value]) => Object.defineProperty(globalThis, key, { value, configurable: true }));
     const incomplete = { name: "Guitar", goal: { period: "daily", target: 2, since: "2026-11-01" } };
     const complete = { ...incomplete, name: "Walk", dailyCounts: { "2026-11-24": 2 } };
-    const now = new Date("2026-11-25T03:35:00Z");
+    const now = new Date(2026, 10, 25, 9, 5);
     checkOpenTabReminders("test", [complete], now);
     checkOpenTabReminders("test", [incomplete, complete], now);
     checkOpenTabReminders("test", [incomplete], now);

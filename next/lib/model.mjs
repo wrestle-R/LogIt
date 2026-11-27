@@ -1,10 +1,22 @@
-export const dayKey = (date = new Date()) =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
+const dayFormatters = new Map();
+
+export function dayKey(date = new Date(), timeZone) {
+  if (!timeZone) {
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${date.getFullYear()}-${month}-${day}`;
+  }
+  let formatter = dayFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+    });
+    if (dayFormatters.size >= 64) dayFormatters.clear();
+    dayFormatters.set(timeZone, formatter);
+  }
+  const parts = Object.fromEntries(formatter.formatToParts(date).map(({ type, value }) => [type, value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
 export function count(habit, day) {
   return Math.max(
     Number(habit.dailyCounts?.[day] || 0),

@@ -82,11 +82,13 @@ class SleepWidget : AppWidgetProvider() {
             val nights = records.map { it?.minutes }
             val latest = nights.indexOfLast { it != null }
             val recordedMinutes = nights.getOrNull(latest)
-            val open = PendingIntent.getActivity(context, id,
-                Intent(context, PhoneTrackingActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            val openIntent = if (owner == null) Intent(context, MainActivity::class.java)
+                else Intent(context, PhoneTrackingActivity::class.java)
                     .putExtra("trackingScreen", "sleep")
-                    .putExtra("sleepDay", dates.getOrNull(latest)?.toString()),
+                    .putExtra("sleepDay", dates.getOrNull(latest)?.toString())
+                    .putExtra("widgetOwner", owner)
+            val open = PendingIntent.getActivity(context, id,
+                openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val metrics = context.resources.displayMetrics
             val configuration = context.resources.configuration
@@ -100,6 +102,7 @@ class SleepWidget : AppWidgetProvider() {
             val date = dates.getOrNull(latest)
             val title = if (date == null || date == today) "Sleep" else "Sleep · ${date.format(dateFormat)}"
             val value = when {
+                owner == null -> "Sign in to LogIt"
                 habit == null -> "Set up Sleep"
                 recordedMinutes == null -> "No entry yet"
                 else -> formatUsageMinutes(recordedMinutes)
@@ -107,7 +110,8 @@ class SleepWidget : AppWidgetProvider() {
             val timeFormat = DateTimeFormatter.ofPattern("h:mm a").withZone(Dates.zone)
             val interval = records.getOrNull(latest)?.let { night ->
                 "${timeFormat.format(Instant.ofEpochMilli(night.bedtime))} – ${timeFormat.format(Instant.ofEpochMilli(night.wakeTime))}"
-            } ?: if (habit == null) "Tap to get started" else "${formatUsageMinutes(goal)} goal"
+            } ?: if (owner == null) "Open LogIt to sign in"
+                else if (habit == null) "Tap to get started" else "${formatUsageMinutes(goal)} goal"
             val goalStatus = if (recordedMinutes != null && recordedMinutes >= goal) "goal met"
                 else "${formatUsageMinutes(goal)} goal"
 
@@ -164,9 +168,10 @@ class SleepWidget : AppWidgetProvider() {
                 val sizes = options.getParcelableArrayList<SizeF>(AppWidgetManager.OPTION_APPWIDGET_SIZES)
                     .orEmpty().distinct().filter { it.width > 0 && it.height > 0 }.take(4)
                 if (sizes.isNotEmpty()) {
-                    manager.updateAppWidget(id, RemoteViews(sizes.associateWith {
+                    val views = RemoteViews(sizes.associateWith {
                         layout(it.width.toInt(), it.height.toInt())
-                    }))
+                    })
+                    if (Store.trackingOwner() == owner) manager.updateAppWidget(id, views)
                     return
                 }
             }
@@ -174,7 +179,7 @@ class SleepWidget : AppWidgetProvider() {
             val minHeight = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 72)
             val portrait = layout(minWidth, options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, minHeight))
             val landscape = layout(options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, minWidth), minHeight)
-            manager.updateAppWidget(id, RemoteViews(landscape, portrait))
+            if (Store.trackingOwner() == owner) manager.updateAppWidget(id, RemoteViews(landscape, portrait))
         }
     }
 }

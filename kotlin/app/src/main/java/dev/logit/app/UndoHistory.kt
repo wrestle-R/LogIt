@@ -12,4 +12,10 @@ object UndoHistory {
         check(last != null && last.id == expectedId) { "That log has already been undone" }
         return last.copy(id = java.util.UUID.randomUUID().toString(), delta = -1)
     }
+
+    fun reapply(history: List<LogOp>, expectedId: String): LogOp {
+        val last = history.lastOrNull()
+        check(last != null && last.id == expectedId) { "That log is no longer available to redo" }
+        return last.copy(id = java.util.UUID.nameUUIDFromBytes("redo:$expectedId".toByteArray()).toString(), delta = 1)
+    }
 }

@@ -16,6 +16,7 @@ class WidgetActionActivity : Activity() {
                 this,
                 intent.getIntExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_ID, -1),
                 intent.getStringExtra("habit"),
+                intent.getStringExtra("widgetOwner"),
             )
         } else {
             startActivity(

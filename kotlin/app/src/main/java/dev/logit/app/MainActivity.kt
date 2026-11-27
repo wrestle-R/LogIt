@@ -10,6 +10,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.google.android.gms.auth.api.signin.*
 import com.google.android.gms.common.api.ApiException
 import com.google.firebase.auth.GoogleAuthProvider
+import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
@@ -23,6 +24,7 @@ class MainActivity : Activity() {
     private var authError: String? = null
     private val healthScope = MainScope()
     private var resumed = false
+    private var healthAccess: Pair<String, Set<String>>? = null
 
     override fun onCreate(state: Bundle?) {
         val splash = installSplashScreen()
@@ -83,7 +85,19 @@ class MainActivity : Activity() {
 
     private fun checkHealth(force: Boolean = false) {
         val owner = Store.trackingOwner() ?: return
-        healthScope.launch { HealthTracking.check(applicationContext, owner, force) }
+        healthScope.launch {
+            if ((force || healthAccess?.first != owner) && HealthMetric.entries.any { HealthTracking.rule(owner, it) != null }) {
+                val grants = HealthTracking.grants(applicationContext)
+                if (Store.trackingOwner() == owner) {
+                    val next = grants?.let { owner to it }
+                    if (next != healthAccess) {
+                        healthAccess = next
+                        render()
+                    }
+                }
+            }
+            HealthTracking.check(applicationContext, owner, force)
+        }
     }
 
     private fun routeLog() {
@@ -173,7 +187,7 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams(dp(80), dp(48)),
         )
         val more = icon("⋯", "More options", bordered = true) {}
-        more.setOnClickListener { settings(more) }
+        more.setOnClickListener { settings() }
         header.addView(more, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(8) })
         root.addView(header)
         AppUpdates.availableVersion(this)?.let { version -> addUpdateBanner(root, version) }
@@ -206,6 +220,9 @@ class MainActivity : Activity() {
                 }
         section.addView(addButton, LinearLayout.LayoutParams(-2, dp(44)))
         root.addView(section)
+        if (Store.hasPendingDeletes()) root.addView(label("Deleting activity…", 14f, Theme.muted).apply {
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        })
         val last = Store.lastLog()
         val tools = row().apply { setPadding(0, 0, 0, dp(8)) }
         val periods = intArrayOf(4, 8, 16, 19, 26, 52)
@@ -215,6 +232,7 @@ class MainActivity : Activity() {
                     this,
                     periods.map { "$it weeks" }.toTypedArray(),
                     periods.indexOf(historyWeeks).coerceAtLeast(0),
+                    pickerTitle = "Activity history",
                 )
                 .apply {
                     onChange = {
@@ -228,24 +246,26 @@ class MainActivity : Activity() {
                 },
             LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(12) },
         )
-        tools.addView(
-            button("Undo") {
-                    if (last != null)
-                        Store.undoLast(last.id) { error -> toast(error ?: "Last log undone") }
-                }
-                .apply {
-                    textSize = 13f
-                    setPadding(dp(12), 0, dp(12), 0)
-                    background = Theme.bordered(Theme.card, Theme.controlBorder, dp(10).toFloat(), dp(1))
-                    setTextColor(Theme.text)
-                    stateListAnimator = null
-                    isEnabled = last != null
-                    alpha = if (last == null) .4f else 1f
-                    contentDescription = "Undo a log on this device"
-                    tooltipText = "Undo the most recent log from this device"
-                },
-            LinearLayout.LayoutParams(-2, dp(44)),
-        )
+        val redo = Store.lastRedo()
+        fun historyAction(title: String, available: LogOp?, apply: (String, (String?) -> Unit) -> Unit) =
+            button(title) {
+                available?.let { apply(it.id) { error -> toast(error ?: "Last log ${if (title == "Undo") "undone" else "redone"}") } }
+            }.apply {
+                textSize = 13f
+                setPadding(dp(8), 0, dp(8), 0)
+                val surface = if (available == null) Theme.track else Theme.card
+                val border = if (available == null) Theme.cardBorder else Theme.controlBorder
+                background = Theme.bordered(surface, border, dp(10).toFloat(), dp(1))
+                setTextColor(if (available == null) Theme.muted else Theme.text)
+                stateListAnimator = null
+                isEnabled = available != null
+                minimumWidth = 0
+                minWidth = 0
+            }
+        tools.addView(historyAction("Undo", last, Store::undoLast), LinearLayout.LayoutParams(dp(64), dp(44)).apply {
+            marginEnd = dp(8)
+        })
+        tools.addView(historyAction("Redo", redo, Store::redoLast), LinearLayout.LayoutParams(dp(64), dp(44)))
         root.addView(tools)
         if (OfflineLogQueue.pendingCount() > 0)
             root.addView(
@@ -272,23 +292,34 @@ class MainActivity : Activity() {
             root.addView(emptyCard, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         }
         var firstActivityOptions: View? = null
-        val automatedActivities = Store.trackingOwner()?.let(PhoneTracking::automatedActivities).orEmpty()
+        var firstGraph: View? = null
+        val owner = Store.trackingOwner()
+        val automatedActivities = owner?.let(PhoneTracking::automatedActivities).orEmpty()
+        val missingHealthAccess = healthAccess?.takeIf { it.first == owner }?.let { (account, grants) ->
+            HealthMetric.entries.filterNot { it.permission in grants }
+                .mapNotNullTo(mutableSetOf()) { HealthTracking.rule(account, it)?.activityId }
+        }.orEmpty()
+        val appRules = owner?.let(PhoneTracking::appRules).orEmpty().groupBy { it.activityId }
+        val limits = owner?.let(PhoneTracking::limits).orEmpty().filter { it.enabled }.mapNotNull { it.activityId }.toSet()
+        val usageAllowed = if (appRules.isNotEmpty() || limits.isNotEmpty()) AndroidUsage.allowed(this) else false
+        val usageEnabled = owner?.let(PhoneTracking::automaticEnabled) == true
+        val sleepId = owner?.let(PhoneTracking::sleep)?.activityId
         Store.habits.forEach { h ->
             val automated = h.id in automatedActivities
             val card =
                 LinearLayout(this).apply {
                     orientation = 1
                     background = Theme.bordered(Theme.card, Theme.cardBorder, dp(12).toFloat(), dp(1))
-                    setPadding(dp(12), dp(6), dp(12), dp(6))
+                    setPadding(dp(12), dp(12), dp(12), dp(12))
                     tag = h.id
                 }
-            val top = row()
+            val top = row().apply { gravity = Gravity.TOP }
             top.addView(
-                label(h.name, 19f).apply {
-                    typeface = Theme.semibold
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                    setPadding(0, 0, 0, 0)
+                LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(0, dp(6), dp(4), 0)
+                    addView(label(h.name, 19f).apply { typeface = Theme.semibold })
+                    addView(label(h.widgetTodayLabel(false), 13f, Theme.muted))
                 },
                 LinearLayout.LayoutParams(0, -2, 1f),
             )
@@ -345,33 +376,77 @@ class MainActivity : Activity() {
             }
             card.addView(
                 HeatmapView(this, h, historyWeeks, binary = automated).apply {
-                    contentDescription = "${h.name} history, last $historyWeeks weeks"
+                    if (firstGraph == null) firstGraph = this
+                    val today = LocalDate.parse(Dates.today())
+                    contentDescription = "${h.name} history, ${h.count(today.toString())} today, ${h.count(today.minusDays(1).toString())} yesterday"
+                    setOnClickListener { backdate(h, includeToday = true) }
+                    val graph = this
+                    val gesture = GestureDetector(this@MainActivity, object : GestureDetector.SimpleOnGestureListener() {
+                        override fun onDown(event: MotionEvent) = true
+
+                        override fun onDoubleTap(event: MotionEvent): Boolean = graph.performClick()
+
+                        override fun onLongPress(event: MotionEvent) {
+                            graph.performClick()
+                        }
+                    })
+                    setOnTouchListener { _, event ->
+                        gesture.onTouchEvent(event)
+                        true
+                    }
                 },
                 LinearLayout.LayoutParams(-1, dp(116)).apply {
                     bottomMargin = dp(2)
                 },
             )
             if (automated) {
-                val gesture = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-                    override fun onDown(event: MotionEvent) = true
-
-                    override fun onDoubleTap(event: MotionEvent): Boolean {
-                        backdate(h, includeToday = true)
-                        return true
+                val rules = appRules[h.id].orEmpty()
+                val appRule = rules.singleOrNull()
+                val route = when {
+                    h.id in missingHealthAccess -> "health"
+                    rules.isNotEmpty() -> "apps"
+                    h.id in limits -> "limits"
+                    h.id == sleepId -> "sleep"
+                    else -> "health"
+                }
+                val needsHealthAccess = h.id in missingHealthAccess
+                val needsUsageAccess = (route == "apps" || route == "limits") && !usageAllowed
+                val isPaused = (route == "apps" || route == "limits") && !usageEnabled
+                val status = when {
+                    needsHealthAccess -> "Health access needed"
+                    needsUsageAccess -> "Usage access needed"
+                    isPaused -> "Automatic tracking paused"
+                    h.count(Dates.today()) > 0 -> "Tracked automatically"
+                    appRule?.minutes == 0 -> "Waiting for ${appRule.app.label} to open"
+                    appRule != null -> "Waiting for ${appRule.minutes} min of ${appRule.app.label} today"
+                    route == "limits" -> "Checks yesterday’s screen time"
+                    else -> "Waiting for today’s data"
+                }
+                val statusView = if (needsHealthAccess || needsUsageAccess || isPaused) {
+                    quietAction("$status ›") { openTracking(route, h.id) }.apply {
+                        gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                        minimumHeight = dp(44)
+                        setPadding(0, dp(4), 0, dp(4))
+                        textSize = 12f
+                        setTextColor(Theme.muted)
                     }
-                })
-                card.setOnTouchListener { _, event -> gesture.onTouchEvent(event) }
-                card.addView(label("Automatic tracking · ${h.widgetTodayLabel(true)}", 12f, Theme.muted))
+                } else label(status, 12f, Theme.muted)
+                card.addView(statusView, LinearLayout.LayoutParams(-2, -2))
             } else {
                 val actions = row()
                 actions.addView(
                     quietAction("Add for yesterday") { backdate(h) }.apply {
-                        gravity = Gravity.CENTER_VERTICAL or Gravity.START
-                        setPadding(0, 0, dp(8), 0)
+                        gravity = Gravity.CENTER
+                        minHeight = dp(44)
+                        minimumHeight = dp(44)
+                        setPadding(dp(8), dp(4), dp(8), dp(4))
+                        val surface = Theme.bordered(Theme.track, Theme.controlBorder, dp(8).toFloat(), dp(1))
+                        background = android.graphics.drawable.InsetDrawable(surface, 0, dp(4), 0, dp(4))
+                        setTextColor(Theme.text)
                         textSize = 12f
                         contentDescription = "Add ${h.name} for yesterday"
                     },
-                    LinearLayout.LayoutParams(0, dp(44), 1f),
+                    LinearLayout.LayoutParams(0, -1, 1f).apply { marginEnd = dp(8) },
                 )
                 actions.addView(
                     button("+ Log today") {
@@ -387,10 +462,10 @@ class MainActivity : Activity() {
                             val surface = Theme.shape(Theme.text, dp(8).toFloat())
                             background = android.graphics.drawable.InsetDrawable(surface, 0, dp(4), 0, dp(4))
                             gravity = Gravity.CENTER
-                            setPadding(dp(14), 0, dp(14), 0)
+                            setPadding(dp(8), dp(4), dp(8), dp(4))
                             contentDescription = "Log ${h.name} for today"
                         },
-                    LinearLayout.LayoutParams(-2, dp(44)),
+                    LinearLayout.LayoutParams(0, -1, 1f),
                 )
                 card.addView(actions)
             }
@@ -405,7 +480,7 @@ class MainActivity : Activity() {
             }
         }
         if (!fromWidget) Introduction.maybeStart()
-        Introduction.show(this, "home", addButton, firstActivityOptions)
+        Introduction.show(this, "home", addButton, firstActivityOptions, firstGraph ?: tools)
     }
 
     @Deprecated("Handled by Android for normal navigation")
@@ -517,10 +592,9 @@ class MainActivity : Activity() {
     }
 
     private fun confirmDelete(habit: Habit) {
-        val owner = Store.trackingOwner() ?: return
         val dialog = PrettyDialog.Builder(this)
             .setTitle("Delete ${habit.name}?")
-            .setMessage("This permanently deletes the activity and its log history across your account.")
+            .setMessage("This permanently deletes the activity and its log history. Any linked screen-time limit will stay in place without this activity.")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Delete activity", null)
             .create()
@@ -530,14 +604,9 @@ class MainActivity : Activity() {
             confirm.setTextColor(if (Theme.light()) 0xffffffff.toInt() else 0xff18181b.toInt())
             confirm.setOnClickListener {
                 confirm.isEnabled = false
+                dialog.dismiss()
                 Store.delete(habit.id) { problem ->
-                    if (problem == null) {
-                        PhoneTracking.removeActivity(owner, habit.id)
-                        dialog.dismiss()
-                    } else {
-                        confirm.isEnabled = true
-                        toast(problem)
-                    }
+                    if (!isDestroyed) toast(problem ?: "Activity deleted")
                 }
             }
         }
@@ -604,29 +673,25 @@ class MainActivity : Activity() {
 
     private fun add() = editActivity()
 
-    private fun settings(anchor: View) {
+    private fun settings() {
         val menu = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(6), dp(6), dp(6), dp(6))
         }
-        val popup = PopupWindow(menu, dp(220), ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
-            setBackgroundDrawable(Theme.bordered(Theme.card, Theme.controlBorder, dp(12).toFloat(), dp(1)))
-            elevation = dp(10).toFloat()
-            isOutsideTouchable = true
-        }
+        val dialog = PrettyDialog.Builder(this).setTitle("Settings").setCompact()
+            .setView(menu).setNegativeButton("Close", null).create()
         fun option(title: String, color: Int = Theme.text, badgeColor: Int? = null, action: () -> Unit) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                minimumHeight = dp(44)
-                setPadding(dp(12), 0, dp(12), 0)
+                minimumHeight = dp(48)
+                setPadding(dp(12), dp(6), dp(12), dp(6))
                 background = android.graphics.drawable.RippleDrawable(
                     android.content.res.ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
                     null, Theme.shape(Color.WHITE, dp(8).toFloat()),
                 )
                 isClickable = true
                 isFocusable = true
-                addView(label(title, 14f, color).apply {
+                addView(label(title, 15f, color).apply {
                     setPadding(0, 0, 0, 0)
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 badgeColor?.let {
@@ -635,11 +700,11 @@ class MainActivity : Activity() {
                     }, LinearLayout.LayoutParams(dp(8), dp(8)))
                 }
                 setOnClickListener {
-                    popup.dismiss()
+                    dialog.dismiss()
                     action()
                 }
             }
-            menu.addView(row, LinearLayout.LayoutParams(-1, dp(44)))
+            menu.addView(row, LinearLayout.LayoutParams(-1, -2))
         }
         if (Store.ready) {
             option("Statistics") { openDetails("statistics") }
@@ -667,7 +732,7 @@ class MainActivity : Activity() {
                 render()
             }
         }
-        popup.showAsDropDown(anchor, 0, dp(4), Gravity.END)
+        dialog.show()
     }
 
     private fun openDetails(screen: String) =

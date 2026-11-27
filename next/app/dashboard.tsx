@@ -27,7 +27,7 @@ import {
   Moon,
   Sun,
 } from "lucide-react";
-import { checkOpenTabReminders, setBrowserReminders } from "@/lib/reminder-browser";
+import { checkOpenTabReminders, setBrowserReminders, watchPushReminderTimeZone } from "@/lib/reminder-browser";
 import { auth, db } from "@/lib/firebase";
 import { count, total, dayKey, change, streak, shiftDay, monday, goalProgress, leastUsedColour } from "@/lib/model.mjs";
 import { Introduction } from "@/components/introduction";
@@ -147,54 +147,104 @@ function Heatmap({
   habit,
   weeks,
   gradient,
+  onLog,
 }: {
   habit: Habit;
   weeks: number;
   gradient: boolean;
+  onLog: () => void;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
+  const press = useRef<{ x: number; y: number; id: number; timer: number } | null>(null);
+  const lastTouch = useRef<{ time: number; x: number; y: number } | null>(null);
+  function cancelPress() {
+    if (press.current) window.clearTimeout(press.current.timer);
+    press.current = null;
+  }
   const [capacity, setCapacity] = useState(19);
   useEffect(() => {
     const node = viewport.current;
     if (!node) return;
     const observer = new ResizeObserver(([entry]) => setCapacity(Math.max(1, Math.floor((entry.contentRect.width + 3) / 17))));
     observer.observe(node);
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); cancelPress(); };
   }, []);
   const visibleWeeks = Math.min(weeks, capacity);
   const today = dayKey();
   const start = shiftDay(monday(today), -(visibleWeeks - 1) * 7);
+  const columns = `repeat(${visibleWeeks},14px)`;
+  const binary = Object.keys(habit.logOps ?? {}).some(id => id.startsWith("auto-"));
   return (
-    <div ref={viewport} className="heatmap-fit">
     <div
-      className="heatmap"
-      style={{ gridTemplateColumns: `repeat(${visibleWeeks},14px)` }}
-      role="img"
-      aria-label={`${habit.name}, ${visibleWeeks} weeks of history`}
+      ref={viewport}
+      className="heatmap-fit"
+      role="button"
+      tabIndex={0}
+      onDoubleClick={() => {
+        if (Date.now() - (lastTouch.current?.time ?? 0) > 500) onLog();
+      }}
+      onPointerDown={event => {
+        if (!event.isPrimary || event.button !== 0) return;
+        cancelPress();
+        press.current = {
+          id: event.pointerId, x: event.clientX, y: event.clientY,
+          timer: window.setTimeout(() => {
+            cancelPress();
+            lastTouch.current = null;
+            onLog();
+          }, 550),
+        };
+      }}
+      onPointerMove={event => {
+        const gesture = press.current;
+        if (gesture && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 10) cancelPress();
+      }}
+      onPointerUp={event => {
+        const gesture = press.current;
+        if (!gesture || gesture.id !== event.pointerId) return;
+        cancelPress();
+        if (event.pointerType !== "touch") return;
+        const time = Date.now();
+        const previous = lastTouch.current;
+        lastTouch.current = {time, x: event.clientX, y: event.clientY};
+        if (previous && time - previous.time < 350 &&
+            Math.hypot(previous.x - event.clientX, previous.y - event.clientY) <= 24) onLog();
+      }}
+      onPointerLeave={cancelPress}
+      onPointerCancel={cancelPress}
+      onContextMenu={event => event.preventDefault()}
+      onKeyDown={event => {
+        if (event.repeat || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        onLog();
+      }}
+      aria-label={`Log ${habit.name}. ${habit.name}, ${visibleWeeks} weeks of history. ${count(habit, today)} today, ${count(habit, shiftDay(today, -1))} yesterday.`}
     >
-      {Array.from({ length: visibleWeeks * 7 }, (_, i) => {
-        const key = shiftDay(start, i);
-        if (key > today) return <span key={key} style={{visibility: "hidden"}} />;
-        const n = count(habit, key);
-        const color = palette[habit.color || 0];
-        return (
-          <span
-            key={key}
-            title={`${key}: ${n} logs`}
-            style={
-              n
-                ? {
-                    background: gradient
-                      ? `linear-gradient(135deg, ${color},${palette[((habit.color || 0) + 1) % 10]})`
-                      : color,
-                    opacity: Math.min(1, 0.25 + n * 0.18),
-                  }
-                : undefined
-            }
-          />
-        );
-      })}
-    </div></div>
+      <div className="heatmap" style={{ gridTemplateColumns: columns }}>
+        {Array.from({ length: visibleWeeks * 7 }, (_, i) => {
+          const key = shiftDay(start, i);
+          if (key > today) return <span key={key} style={{visibility: "hidden"}} />;
+          const n = count(habit, key);
+          const color = palette[habit.color || 0];
+          return (
+            <span
+              key={key}
+              title={`${key}: ${n} logs`}
+              style={
+                n
+                  ? {
+                      background: gradient && !binary
+                        ? `linear-gradient(135deg, ${color},${palette[((habit.color || 0) + 1) % 10]})`
+                        : color,
+                      opacity: binary ? 1 : Math.min(1, 0.25 + n * 0.18),
+                    }
+                  : undefined
+              }
+            />
+          );
+        })}
+      </div>
+    </div>
   );
 }
 function Hint({
@@ -256,6 +306,12 @@ export default function Dashboard() {
     [syncError, setSyncError] = useState("");
 
   const [logDay, setLogDay] = useState("");
+  const [today, setToday] = useState(() => dayKey());
+  const [deleteTarget, setDeleteTarget] = useState<Habit | null>(null);
+  const activityEditorTrigger = useRef<HTMLButtonElement | null>(null);
+  const addActivityTrigger = useRef<HTMLButtonElement>(null);
+  const deleting = useRef(new Map<string, Set<string>>());
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const [editing, setEditing] = useState<Habit | null>(null);
   const [period, setPeriod] = useState<"none" | Goal["period"]>("none");
   const [target, setTarget] = useState("1");
@@ -280,25 +336,32 @@ export default function Dashboard() {
   const [remindersBusy, setRemindersBusy] = useState(false);
   const [reminderMode, setReminderMode] = useState("off");
   const [pastLog, setPastLog] = useState(false);
-  const [undoDays, setUndoDays] = useState<Record<string, string[]>>({});
+  type LogHistory = { undo: Record<string, string[]>; redo: Record<string, { day: string; id: string }[]> };
+  const [history, setHistory] = useState<LogHistory>({ undo: {}, redo: {} });
   const undoKey = demo ? "logit-undo:demo" : user ? "logit-undo:" + user.uid : null;
   useEffect(() => {
-    try { setUndoDays(undoKey ? JSON.parse(localStorage.getItem(undoKey) || "{}") : {}); }
-    catch { setUndoDays({}); }
+    try {
+      const saved = undoKey ? JSON.parse(localStorage.getItem(undoKey) || "{}") : {};
+      setHistory(saved.undo && saved.redo ? saved : { undo: saved, redo: {} });
+    } catch {
+      setHistory({ undo: {}, redo: {} });
+    }
   }, [undoKey]);
-  function rememberUndo(history: Record<string, string[]>) {
-    setUndoDays(history);
+  function rememberHistory(next: LogHistory) {
+    setHistory(next);
     if (undoKey) {
-      try { localStorage.setItem(undoKey, JSON.stringify(history)); } catch {}
+      try { localStorage.setItem(undoKey, JSON.stringify(next)); } catch {}
     }
   }
   const validTarget = period === "none" || /^\d+$/.test(target) && Number(target) >= 1 && Number(target) <= 999;
-  function openLog(habit: Habit, past: boolean) {
-    setLogDay(past ? shiftDay(dayKey(), -1) : dayKey());
+  function openLog(habit: Habit, past: boolean, startToday = false) {
+    toast.dismiss("log-feedback");
+    setLogDay(past && !startToday ? shiftDay(dayKey(), -1) : dayKey());
     setPastLog(past);
     setConfirm(habit);
   }
   function openGoal(habit: Habit | null) {
+    toast.dismiss("log-feedback");
     setEditing(habit);
     setName(habit?.name || "");
     setPeriod(habit?.goal?.period || "none");
@@ -308,15 +371,29 @@ export default function Dashboard() {
 
   const [pending, setPending] = useState<PendingLog[]>([]);
   const habits = useMemo(
-    () => (demo ? baseHabits : project(baseHabits, pending)),
-    [baseHabits, pending, demo],
+    () => (demo ? baseHabits : project(baseHabits, pending)).filter(habit => !hidden.has(habit.id)),
+    [baseHabits, pending, demo, hidden],
   );
+  useEffect(() => {
+    const refresh = () => setToday(dayKey());
+    refresh();
+    const timer = window.setInterval(refresh, 1_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, []);
   useEffect(
     () =>
       onAuthStateChanged(auth, (u) => {
         setHabits([]);
         setPending([]);
-        setUndoDays({});
+        setHistory({ undo: {}, redo: {} });
+        setHidden(new Set(u ? deleting.current.get(u.uid) : undefined));
+        setDeleteTarget(null);
+        setAdding(false);
+        setConfirm(null);
         setUser(u);
       }),
     [],
@@ -326,6 +403,10 @@ export default function Dashboard() {
     setReminderMode(mode || "off");
     setRemindersOn(mode === "on" || mode === "push" || mode === "open-tab");
   }, [user]);
+  useEffect(() => {
+    if (!user) return;
+    return watchPushReminderTimeZone(user);
+  }, [user, reminderMode]);
   useEffect(() => {
     if (!user || !loaded || syncError || reminderMode !== "open-tab") return;
     const check = () => { if (navigator.onLine) checkOpenTabReminders(user.uid, habits); };
@@ -421,13 +502,13 @@ export default function Dashboard() {
     );
   }, [user, demo]);
   useEffect(() => {
-    if (demo) localStorage.setItem("logit-demo", JSON.stringify(habits));
-  }, [habits, demo]);
+    if (demo) localStorage.setItem("logit-demo", JSON.stringify(baseHabits));
+  }, [baseHabits, demo]);
   const error = (e: unknown) =>
     toast.error(
       e instanceof Error ? e.message : "Something went wrong. Please retry.",
     );
-  async function log(h: Habit, delta: number, day = dayKey()) {
+  async function log(h: Habit, delta: number, day = dayKey(), operationId?: string) {
     if (demo) {
       setHabits((old) =>
         old.map((item) => (item.id === h.id ? change(item, day, delta) : item)),
@@ -435,7 +516,8 @@ export default function Dashboard() {
       return;
     }
     if (!user) throw new Error("Sign in first");
-    enqueue(user.uid, h.id, day, delta);
+    if (deleting.current.get(user.uid)?.has(h.id)) throw new Error("This activity is being deleted.");
+    enqueue(user.uid, h.id, day, delta, operationId);
     setPending(queued(user.uid));
     if (navigator.onLine)
       void flush(user.uid, applyQueued, () =>
@@ -473,9 +555,34 @@ export default function Dashboard() {
     if (!day || day > dayKey()) { setBusy(false); return; }
     try {
       await log(h, 1, day);
-      rememberUndo({...undoDays, [h.id]: [...(undoDays[h.id] || []), day]});
+      rememberHistory({
+        undo: {...history.undo, [h.id]: [...(history.undo[h.id] || []), day]},
+        redo: {...history.redo, [h.id]: []},
+      });
       setConfirm(null);
-      toast.success(`Saved ${h.name} for ${day === dayKey() ? "today" : day}`);
+      toast.success(`Saved ${h.name} for ${day === dayKey() ? "today" : day}`, { id: "log-feedback" });
+    } catch (e) {
+      error(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function moveLogHistory(habit: Habit, direction: "undo" | "redo") {
+    if (busy) return;
+    const undo = history.undo[habit.id] || [];
+    const redo = history.redo[habit.id] || [];
+    const reapply = redo.at(-1);
+    const day = direction === "undo" ? undo.at(-1) : reapply?.day;
+    if (!day || (direction === "undo" && count(habit, day) < 1)) return;
+    setBusy(true);
+    try {
+      const isUndo = direction === "undo";
+      await log(habit, isUndo ? -1 : 1, day, isUndo ? undefined : reapply?.id);
+      rememberHistory({
+        undo: { ...history.undo, [habit.id]: isUndo ? undo.slice(0, -1) : [...undo, day] },
+        redo: { ...history.redo, [habit.id]: isUndo ? [...redo, { day, id: crypto.randomUUID() }] : redo.slice(0, -1) },
+      });
+      toast.success(isUndo ? "Log undone" : "Log redone", { id: "log-feedback" });
     } catch (e) {
       error(e);
     } finally {
@@ -489,8 +596,18 @@ export default function Dashboard() {
       const goal = period === "none" ? null : editing?.goal?.period === period && editing.goal.target === Number(target) ? editing.goal : { period, target: Number(target), since: dayKey() };
       if (editing) {
         const id = editing.id;
-        if (demo) setHabits(old => old.map(h => h.id === id ? {...h, goal} : h));
-        else await updateDoc(doc(db, "habits", id), {goal});
+        if (demo) setHabits(old => old.map(h => h.id === id ? {...h, name: name.trim(), goal} : h));
+        else {
+          if (!user || !navigator.onLine) throw new Error("Connect to the internet to save activity changes.");
+          const ref = doc(db, "habits", id);
+          await runTransaction(db, async transaction => {
+            const snapshot = await transaction.get(ref);
+            if (!snapshot.exists() || snapshot.data().userId !== user.uid || auth.currentUser?.uid !== user.uid) {
+              throw new Error("This activity is no longer available.");
+            }
+            transaction.update(ref, { name: name.trim(), goal });
+          });
+        }
         setAdding(false);
         if (goal && user && !localStorage.getItem("logit-reminders:" + user.uid)) setRemindersOpen(true);
         return;
@@ -508,11 +625,11 @@ export default function Dashboard() {
       };
       if (demo)
         setHabits((old) => [...old, { ...data, id: crypto.randomUUID() }]);
-      else
-        await addDoc(collection(db, "habits"), {
-          ...data,
-          createdAt: serverTimestamp(),
-        });
+      else {
+        if (!user || !navigator.onLine) throw new Error("Connect to the internet to create an activity.");
+        if (auth.currentUser?.uid !== user.uid) throw new Error("Your account changed.");
+        await addDoc(collection(db, "habits"), { ...data, createdAt: serverTimestamp() });
+      }
       setAdding(false);
       if (goal && user && !localStorage.getItem("logit-reminders:" + user.uid)) setRemindersOpen(true);
       setName("");
@@ -520,6 +637,46 @@ export default function Dashboard() {
       error(e);
     } finally {
       setBusy(false);
+    }
+  }
+  async function deleteActivity(habit: Habit) {
+    const owner = user?.uid;
+    if (!demo && !owner) return;
+    setDeleteTarget(null);
+    if (demo) {
+      setHabits(current => current.filter(item => item.id !== habit.id));
+      return;
+    }
+    if (!owner) return;
+    const operations = deleting.current.get(owner) ?? new Set<string>();
+    if (operations.has(habit.id)) return;
+    operations.add(habit.id);
+    deleting.current.set(owner, operations);
+    setHidden(new Set(operations));
+    const pendingToast = toast.loading("Deleting activity…");
+    try {
+      if (!navigator.onLine) throw new Error("Offline");
+      const ref = doc(db, "habits", habit.id);
+      await runTransaction(db, async transaction => {
+        const snapshot = await transaction.get(ref);
+        if (auth.currentUser?.uid !== owner) throw new Error("Your account changed.");
+        if (!snapshot.exists()) return;
+        if (snapshot.data().userId !== owner) throw new Error("This activity is no longer available.");
+        transaction.delete(ref);
+      });
+      if (auth.currentUser?.uid === owner) {
+        setHabits(current => current.filter(item => item.id !== habit.id));
+        toast.success("Activity deleted", { id: pendingToast });
+      }
+    } catch {
+      if (auth.currentUser?.uid === owner) {
+        toast.error("Couldn’t delete the activity. Check your connection and try again.", { id: pendingToast });
+      }
+    } finally {
+      if (auth.currentUser?.uid !== owner) toast.dismiss(pendingToast);
+      operations.delete(habit.id);
+      if (!operations.size) deleting.current.delete(owner);
+      if (auth.currentUser?.uid === owner) setHidden(new Set(operations));
     }
   }
   async function reorder(from: string, to: string) {
@@ -559,6 +716,22 @@ export default function Dashboard() {
     }
   }
   if (statsOpen) return <Statistics habits={habits} palette={palette} onBack={() => setStatsOpen(false)} />;
+  const definition = (
+    <section className="persistence" aria-labelledby="persistence-title">
+      <div className="definition-title">
+        <h1 id="persistence-title">persistence</h1>
+        <span>/pərˈsɪstəns/</span>
+      </div>
+      <Badge variant="secondary">noun</Badge>
+      <p>
+        the fact of continuing in an opinion or course of action in spite of
+        difficulty or opposition.
+      </p>
+      <p className="definition-quote">
+        “Persistence and endurance will make you omnipotent.”
+      </p>
+    </section>
+  );
   return (
     <TooltipProvider>
       <main className="shell">
@@ -573,10 +746,11 @@ export default function Dashboard() {
               <Button
                 variant="ghost"
                 size="icon"
+                className="theme-toggle"
                 aria-label={dark ? "Use light theme" : "Use dark theme"}
                 onClick={() => setDark(!dark)}
               >
-                {dark ? <Sun /> : <Moon />}
+                <span data-active={dark}><Moon /></span><span data-active={!dark}><Sun /></span>
               </Button>
             </Hint>
             {(user || demo) && (
@@ -600,20 +774,7 @@ export default function Dashboard() {
             )}
           </div>
         </header>
-        {!(user || demo) && <section className="persistence" aria-labelledby="persistence-title">
-          <div className="definition-title">
-            <h1 id="persistence-title">persistence</h1>
-            <span>/pərˈsɪstəns/</span>
-          </div>
-          <Badge variant="secondary">noun</Badge>
-          <p>
-            the fact of continuing in an opinion or course of action in spite of
-            difficulty or opposition.
-          </p>
-          <p className="definition-quote">
-            “Persistence and endurance will make you omnipotent.”
-          </p>
-        </section>}
+        {!(user || demo) && definition}
         <>
           {demo && (
             <p className="demo-note">
@@ -631,14 +792,15 @@ export default function Dashboard() {
             </p>
           )}
           <section className="activity-controls">
-            <div>
+            <div className="sr-only">
               <h2>Your activities</h2>
               <p>
                 {habits.length} activities ·{" "}
-                {habits.reduce((s, h) => s + count(h, dayKey()), 0)} logs today
+                {habits.reduce((s, h) => s + count(h, today), 0)} logs today
               </p>
             </div>
             <Button
+              ref={addActivityTrigger}
               data-intro="add"
               onClick={() => {
                 if (user || demo) openGoal(null);
@@ -654,24 +816,26 @@ export default function Dashboard() {
           </section>
           {(user || demo) && (
             <div className="filters">
-              <Button variant="ghost" onClick={() => setStatsOpen(true)}>View statistics</Button>
-              {user && <Button data-intro="reminders" variant="ghost" onClick={() => setRemindersOpen(true)}>Goal reminders</Button>}
-              {user && <Button variant="ghost" onClick={() => setIntroductionOwner(introductionKey)}>Introduction</Button>}
-              <Label htmlFor="timeframe">History</Label>
-              <Select value={weeks} onValueChange={setWeeks}>
-                <SelectTrigger id="timeframe" className="w-36">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {[4, 8, 16, 19, 26, 52].map((n) => (
-                      <SelectItem key={n} value={String(n)}>
-                        {n} weeks
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              <Button variant="outline" onClick={() => setStatsOpen(true)}>View statistics</Button>
+              {user && <Button data-intro="reminders" variant="outline" onClick={() => setRemindersOpen(true)}>Goal reminders</Button>}
+              {user && <Button variant="outline" onClick={() => setIntroductionOwner(introductionKey)}>Introduction</Button>}
+              <div className="inline-flex items-center gap-2">
+                <Label htmlFor="timeframe">History</Label>
+                <Select value={weeks} onValueChange={setWeeks}>
+                  <SelectTrigger id="timeframe" className="w-36">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {[4, 8, 16, 19, 26, 52].map((n) => (
+                        <SelectItem key={n} value={String(n)}>
+                          {n} weeks
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
               <Button
                 variant="outline"
                 aria-pressed={gradient}
@@ -685,7 +849,7 @@ export default function Dashboard() {
             <p role="status">Loading your activities…</p>
           ) : habits.length === 0 ? (
             <section className="empty">
-              <p>No habits yet. Create your first habit to get started!</p>
+              <p>No activities yet. Add an activity to get started.</p>
             </section>
           ) : (
             <DndContext
@@ -707,17 +871,20 @@ export default function Dashboard() {
                             <div className="activity-heading">
                               <div>
                                 <h3>{h.name}</h3>
-                                <Button data-intro="goal" variant="ghost" size="sm" className="-ml-1.5 px-1.5" onClick={() => openGoal(h)}>
-                                  {(() => {
-                                    const progress = goalProgress(h, dayKey());
-                                    return progress ? `${progress.logged} of ${progress.target} ${progress.period === "daily" ? "today" : "this week"}` : "Set goal";
-                                  })()}
+                                {(() => {
+                                  const progress = goalProgress(h, today);
+                                  return progress && <p>{progress.logged} of {progress.target} {progress.period === "daily" ? "today" : "this week"}</p>;
+                                })()}
+                                <Button data-intro="goal" variant="outline" size="sm" className="px-2" onClick={event => {
+                                  activityEditorTrigger.current = event.currentTarget;
+                                  openGoal(h);
+                                }} aria-label={`Edit ${h.name}`}>
+                                  Edit
                                 </Button>
-                                <p>{total(h)} total logs · {streak(h)} day streak</p>
                               </div>
                               <div className="toolbar">
                                 <Badge variant="secondary">
-                                  {count(h, dayKey())} today
+                                  {count(h, today)} today
                                 </Badge>
                                 <Hint label="Drag to reorder">
                                   <Button
@@ -739,26 +906,23 @@ export default function Dashboard() {
                                   habit={h}
                                   weeks={Number(weeks)}
                                   gradient={gradient}
+                                  onLog={() => openLog(h, true, true)}
                                 />
                               </div>
                             </div>
                             <footer>
                               <div className="toolbar">
-                                <Button variant="ghost" size="sm" onClick={() => openLog(h, true)}>Add for yesterday</Button>
-                                <Button variant="outline" disabled={busy || count(h, undoDays[h.id]?.at(-1) || "") < 1}
-                                  onClick={async () => {
-                                    const day = undoDays[h.id]?.at(-1);
-                                    if (!day || busy || count(h, day) < 1) return;
-                                    setBusy(true);
-                                    try {
-                                      await log(h, -1, day);
-                                      rememberUndo({...undoDays, [h.id]: undoDays[h.id].slice(0, -1)});
-                                      toast.success("Log undone");
-                                    } catch (e) { error(e); }
-                                    finally { setBusy(false); }
-                                  }}>Undo</Button>
-                                <SkeuoButton className="log-action" onClick={() => openLog(h, false)}><Plus /> Log today</SkeuoButton>
+                                <Button variant="outline" size="sm" onClick={() => openLog(h, true)}>Add for yesterday</Button>
+                                <div className="log-history" data-intro="log-history">
+                                  <Button variant="outline" disabled={busy || count(h, history.undo[h.id]?.at(-1) || "") < 1}
+                                    onClick={() => void moveLogHistory(h, "undo")}>Undo</Button>
+                                  <Button variant="outline" disabled={busy || !history.redo[h.id]?.length}
+                                    onClick={() => void moveLogHistory(h, "redo")}>Redo</Button>
+                                </div>
+                                <SkeuoButton className={`log-action ${count(h, today) > 0 ? "is-logged" : ""}`} onClick={() => openLog(h, false)}><Plus /> {count(h, today) > 0 ? "Log again" : "Log today"}</SkeuoButton>
                               </div>
+                              <div className="activity-details">
+                                <p className="activity-stats"><span>Current: {streak(h)} days</span><span>Best: {Math.max(h.longestStreak || 0, streak(h))} days</span><span>Total: {total(h)} logs</span></p>
                               <Select
                                 value={String(h.color || 0)}
                                 onValueChange={(v) => void color(h, v)}
@@ -783,6 +947,7 @@ export default function Dashboard() {
                                   </SelectGroup>
                                 </SelectContent>
                               </Select>
+                              </div>
                             </footer>
                           </>
                         )}
@@ -793,6 +958,7 @@ export default function Dashboard() {
             </DndContext>
           )}
         </>
+        {(user || demo) && definition}
         {introductionKey && introductionOwner === introductionKey && (
           <Introduction key={introductionKey} onDone={finishIntroduction} />
         )}
@@ -841,7 +1007,7 @@ export default function Dashboard() {
         >
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>{editing ? `Goal for ${editing.name}` : "New activity"}</DialogTitle>
+              <DialogTitle>{editing ? "Edit activity" : "New activity"}</DialogTitle>
               <DialogDescription>
                 A goal is optional. You can change it anytime.
               </DialogDescription>
@@ -852,7 +1018,7 @@ export default function Dashboard() {
                 void add();
               }}
             >
-              {!editing && <Field>
+              <Field>
                 <FieldLabel htmlFor="name">Activity name</FieldLabel>
                 <Input
                   autoFocus
@@ -860,9 +1026,9 @@ export default function Dashboard() {
                   maxLength={80}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Read, walk, practice…"
+                  placeholder="e.g. Read"
                 />
-              </Field>}
+              </Field>
               <Field className="mt-4">
                 <FieldLabel htmlFor="goal-period">Goal</FieldLabel>
                 <select id="goal-period" className="logit-select" value={period} onChange={e => setPeriod(e.target.value as typeof period)}>
@@ -883,10 +1049,32 @@ export default function Dashboard() {
                   Cancel
                 </Button>
                 <Button type="submit" disabled={busy || !name.trim() || !validTarget}>
-                  {busy ? "Saving…" : editing ? "Save goal" : "Create activity"}
+                  {busy ? "Saving…" : editing ? "Save changes" : "Create activity"}
                 </Button>
               </DialogFooter>
             </form>
+            {editing && <Button variant="ghost" className="justify-self-start text-destructive" disabled={busy} onClick={() => {
+              toast.dismiss("log-feedback");
+              setAdding(false);
+              setDeleteTarget(editing);
+            }}>Delete activity</Button>}
+          </DialogContent>
+        </Dialog>
+        <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open) setDeleteTarget(null); }}>
+          <DialogContent onCloseAutoFocus={event => {
+            event.preventDefault();
+            const trigger = activityEditorTrigger.current;
+            if (trigger?.isConnected) trigger.focus();
+            else addActivityTrigger.current?.focus();
+          }}>
+            <DialogHeader>
+              <DialogTitle>Delete {deleteTarget?.name}?</DialogTitle>
+              <DialogDescription>This permanently deletes the activity and its log history.</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+              <Button variant="destructive" onClick={() => { if (deleteTarget) void deleteActivity(deleteTarget); }}>Delete activity</Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
         <Dialog
@@ -923,15 +1111,17 @@ export default function Dashboard() {
         <Dialog open={remindersOpen} onOpenChange={setRemindersOpen}>
           <DialogContent className="sm:max-w-sm">
             <DialogHeader><DialogTitle>Goal reminders</DialogTitle><DialogDescription>
-              Get a heads-up at 8 pm if you're short, and a note at 9 am if a goal slipped by. Weekly reminders arrive on Sunday evening and Monday morning. Times are in India time.
-              {reminderMode === "open-tab" && " Keep LogIt open to get reminders in this browser."}
+              Get a reminder when there’s still time to meet a goal or when a goal was missed.
+              {reminderMode === "open-tab"
+                ? " Keep LogIt open. Checks run at 8 pm and 9 am in your browser’s time zone."
+                : " Background delivery uses LogIt’s schedule. Goal dates follow your browser’s time zone."}
             </DialogDescription></DialogHeader>
-            <DialogFooter>
-              <Button variant="ghost" size="sm" disabled={remindersBusy} onClick={() => {
+            <DialogFooter className="grid grid-cols-2">
+              <Button variant="outline" disabled={remindersBusy} onClick={() => {
                 if (user && !remindersOn) localStorage.setItem("logit-reminders:" + user.uid, "off");
                 setRemindersOpen(false);
               }}>{remindersOn ? "Close" : "Not now"}</Button>
-              <Button size="sm" disabled={!user || remindersBusy} onClick={async () => {
+              <Button disabled={!user || remindersBusy} onClick={async () => {
                 if (!user) return;
                 setRemindersBusy(true);
                 try {

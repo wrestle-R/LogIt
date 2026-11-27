@@ -18,6 +18,7 @@ import androidx.work.WorkerParameters
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.ZoneId
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import org.json.JSONArray
@@ -33,6 +34,7 @@ internal data class ScreenLimit(
     val minutes: Int,
     val activityId: String?,
     val since: Long,
+    val enabled: Boolean = true,
 ) {
     companion object {
         const val totalId = "total"
@@ -90,6 +92,7 @@ internal object PhoneTracking {
     }
 
     fun saveSleep(owner: String, settings: SleepTracking?) {
+        if (Store.trackingOwner() != owner) return
         val editor = Store.prefs.edit()
         if (settings == null) {
             HealthTracking.saveRule(owner, HealthMetric.Sleep, null)
@@ -116,6 +119,7 @@ internal object PhoneTracking {
     }
 
     fun saveAppRules(owner: String, rules: List<AppLogRule>) {
+        if (Store.trackingOwner() != owner) return
         val values = rules.map { rule -> JSONObject()
             .put("activity", rule.activityId).put("app", rule.app.id).put("label", rule.app.label)
             .put("minutes", rule.minutes).put("since", rule.since) }
@@ -132,16 +136,20 @@ internal object PhoneTracking {
             val apps = value.getJSONArray("apps")
             ScreenLimit(value.getString("id"), value.getString("name"),
                 (0 until apps.length()).map { apps.getString(it) }.toSet(), value.getInt("minutes"),
-                value.optString("activity").ifBlank { null }, value.getLong("since"))
+                value.optString("activity").ifBlank { null }, value.getLong("since"),
+                value.optBoolean("enabled", true))
         }
     }
 
     fun saveLimits(owner: String, limits: List<ScreenLimit>) {
+        if (Store.trackingOwner() != owner) return
         val values = limits.map { limit -> JSONObject()
             .put("id", limit.id).put("name", limit.name).put("apps", JSONArray(limit.apps.toList()))
-            .put("minutes", limit.minutes).put("activity", limit.activityId.orEmpty()).put("since", limit.since) }
+            .put("minutes", limit.minutes).put("activity", limit.activityId.orEmpty())
+            .put("since", limit.since).put("enabled", limit.enabled) }
         Store.prefs.edit().putString(key(owner, "limits"), JSONArray(values).toString())
-            .remove(key(owner, "last-check")).apply()
+            .remove(key(owner, "last-check")).remove(key(owner, "screen-readings"))
+            .remove(key(owner, "yesterday-readings")).apply()
         schedule()
         Widgets.refresh(Store.context)
     }
@@ -149,11 +157,12 @@ internal object PhoneTracking {
     fun automatedActivities(owner: String): Set<String> = buildSet {
         sleep(owner)?.let { add(it.activityId) }
         addAll(appRules(owner).map { it.activityId })
-        addAll(limits(owner).mapNotNull { it.activityId })
+        addAll(limits(owner).filter { it.enabled }.mapNotNull { it.activityId })
         addAll(HealthMetric.entries.mapNotNull { HealthTracking.rule(owner, it)?.activityId })
     }
 
     fun reading(owner: String, limitId: String, yesterday: Boolean = false): ScreenReading? {
+        if (Store.prefs.getString(key(owner, "reading-zone"), null) != Dates.zone.id) return null
         val value = json(owner, if (yesterday) "yesterday-readings" else "screen-readings")
             .optJSONObject(limitId) ?: return null
         return ScreenReading(value.getInt("minutes"), value.getString("day"))
@@ -179,7 +188,7 @@ internal object PhoneTracking {
     fun schedule() {
         val owner = Store.trackingOwner()
         val manager = WorkManager.getInstance(Store.context)
-        if (owner == null || !automaticEnabled(owner) || (sleep(owner)?.estimateFromPhone != true && appRules(owner).isEmpty() && limits(owner).isEmpty())) {
+        if (owner == null || !automaticEnabled(owner) || (sleep(owner)?.estimateFromPhone != true && appRules(owner).isEmpty() && limits(owner).none { it.enabled })) {
             manager.cancelUniqueWork(periodicWork)
             manager.cancelUniqueWork(refreshWork)
             return
@@ -191,21 +200,32 @@ internal object PhoneTracking {
 
     fun refresh() {
         val owner = Store.trackingOwner() ?: return
-        if (!automaticEnabled(owner) || (sleep(owner)?.estimateFromPhone != true && appRules(owner).isEmpty() && limits(owner).isEmpty())) return
+        if (!automaticEnabled(owner) || (sleep(owner)?.estimateFromPhone != true && appRules(owner).isEmpty() && limits(owner).none { it.enabled })) return
         WorkManager.getInstance(Store.context).enqueueUniqueWork(refreshWork, ExistingWorkPolicy.KEEP,
             OneTimeWorkRequestBuilder<PhoneUsageWorker>().build())
     }
 
     fun removeActivity(owner: String, id: String) {
+        if (Store.trackingOwner() != owner) return
         HealthTracking.removeActivity(owner, id)
         if (sleep(owner)?.activityId == id) saveSleep(owner, null)
         Store.prefs.edit().remove(key(owner, "pending-sleep:$id")).apply()
-        saveAppRules(owner, appRules(owner).filterNot { it.activityId == id })
-        saveLimits(owner, limits(owner).map { if (it.activityId == id) it.copy(activityId = null) else it })
+        val rules = appRules(owner)
+        if (rules.any { it.activityId == id }) saveAppRules(owner, rules.filterNot { it.activityId == id })
+        val limits = limits(owner)
+        if (limits.any { it.activityId == id }) {
+            saveLimits(owner, limits.map { if (it.activityId == id) it.copy(activityId = null) else it })
+        }
+    }
+
+    fun reconcileActivities(owner: String, ids: Set<String>) {
+        // Include paused limits so they become explicitly unlinked too.
+        val references = automatedActivities(owner) + limits(owner).mapNotNull { it.activityId }
+        for (id in references - ids) removeActivity(owner, id)
     }
 
     private fun now() = System.currentTimeMillis()
-    private fun startOf(day: LocalDate) = day.atStartOfDay(Dates.zone).toInstant().toEpochMilli()
+    private fun startOf(day: LocalDate, zone: ZoneId) = Dates.startOfDay(day, zone).toEpochMilli()
     private fun minutes(milliseconds: Long) = TimeUnit.MILLISECONDS.toMinutes(milliseconds).toInt()
 
     fun run(context: Context, onReturn: Boolean = false) = synchronized(processing) {
@@ -213,20 +233,24 @@ internal object PhoneTracking {
         if (!automaticEnabled(owner)) return@synchronized
         val sleep = sleep(owner)?.takeIf { it.estimateFromPhone }
         val rules = appRules(owner)
-        val limits = limits(owner)
+        val limits = limits(owner).filter { it.enabled }
         if (sleep == null && rules.isEmpty() && limits.isEmpty()) return@synchronized
+        val zone = Dates.zone
         val last = Store.prefs.getLong(key(owner, "last-check"), 0)
         val end = now()
-        if (!onReturn && end - last in 0 until 10_000L) return@synchronized
+        if (!onReturn && Store.prefs.getString(key(owner, "reading-zone"), null) == zone.id &&
+            end - last in 0 until 10_000L) return@synchronized
         if (!AndroidUsage.allowed(context)) {
             // A day with a known break in access does not qualify as an under-limit day.
             Store.prefs.edit().remove(key(owner, "access-since")).apply()
             main.post { updated?.invoke() }
             return@synchronized
         }
-        val today = Instant.ofEpochMilli(end).atZone(Dates.zone).toLocalDate()
+        val instant = Instant.ofEpochMilli(end)
+        val today = instant.atZone(zone).toLocalDate()
+        val automaticSince = Dates.automaticSince(owner, "phone", zone, instant).toEpochMilli()
         val historyStart = today.minusDays(3)
-        val timeline = AndroidUsage.read(context, startOf(historyStart), end) ?: return@synchronized
+        val timeline = AndroidUsage.read(context, startOf(historyStart, zone), end) ?: return@synchronized
         val accessSince = Store.prefs.getLong(key(owner, "access-since"), end)
         Store.prefs.edit().putLong(key(owner, "access-since"), accessSince)
             .putLong(key(owner, "last-check"), end).apply()
@@ -236,14 +260,14 @@ internal object PhoneTracking {
         for (daysAgo in 2L downTo 0L) {
             if (Store.trackingOwner() != owner || !automaticEnabled(owner) || !AndroidUsage.allowed(context)) return@synchronized
             val day = today.minusDays(daysAgo)
-            val start = startOf(day)
-            val stop = minOf(startOf(day.plusDays(1)), end)
+            val start = startOf(day, zone)
+            val stop = minOf(startOf(day.plusDays(1), zone), end)
             val dayKey = day.toString()
             for (rule in rules) {
-                val ruleStart = maxOf(start, rule.since, accessSince)
+                val ruleStart = maxOf(start, rule.since, accessSince, automaticSince)
                 if (ruleStart < stop && timeline.meetsAppRule(rule.app.id, rule.minutes, ruleStart, stop)) {
                     main.post {
-                        if (automaticEnabled(owner) && rule in appRules(owner)) enqueueLog(owner, rule.activityId, dayKey)
+                        if (Dates.zone == zone && automaticEnabled(owner) && rule in appRules(owner)) enqueueLog(owner, rule.activityId, dayKey)
                     }
                 }
             }
@@ -253,25 +277,25 @@ internal object PhoneTracking {
                 val threshold = TimeUnit.MINUTES.toMillis(limit.minutes.toLong())
                 if (daysAgo == 0L) {
                     readings.put(limit.id, JSONObject().put("day", dayKey).put("minutes", minutes(time)))
-                    if (time >= threshold) notifyAtLimit(context, owner, dayKey, limit)
-                } else if (start >= maxOf(accessSince, limit.since) &&
+                    if (time >= threshold && Dates.zone == zone) notifyAtLimit(context, owner, dayKey, limit)
+                } else if (start >= maxOf(accessSince, limit.since, automaticSince) &&
                     timeline.hasFullDayEvidence(start, stop)) {
                     if (daysAgo == 1L) {
                         yesterday.put(limit.id, JSONObject().put("day", dayKey).put("minutes", minutes(time)))
                     }
                     if (time < threshold) limit.activityId?.let { activity ->
                         main.post {
-                            if (automaticEnabled(owner) && limit in limits(owner)) enqueueLog(owner, activity, dayKey)
+                            if (Dates.zone == zone && automaticEnabled(owner) && limit in limits(owner)) enqueueLog(owner, activity, dayKey)
                         }
                     }
                 }
             }
             if (sleep != null && AndroidUsage.screenEventsSupported) {
-                val estimate = timeline.sleep(day, sleep.schedule, Dates.zone, maxOf(sleep.since, accessSince))
+                val estimate = timeline.sleep(day, sleep.schedule, zone, maxOf(sleep.since, accessSince, automaticSince))
                 if (estimate != null) {
                     val summary = SleepSummary(estimate.bedtime, estimate.wakeTime)
                     main.post {
-                        if (Store.trackingOwner() == owner && automaticEnabled(owner) && sleep(owner) == sleep &&
+                        if (Dates.zone == zone && Store.trackingOwner() == owner && automaticEnabled(owner) && sleep(owner) == sleep &&
                             pendingSummary(owner, sleep.activityId, dayKey) == null &&
                             Store.habits.find { it.id == sleep.activityId }?.sleepSummaries?.get(dayKey) != summary
                         ) saveSummary(owner, sleep.activityId, dayKey, summary)
@@ -279,7 +303,8 @@ internal object PhoneTracking {
                 }
             }
         }
-        Store.prefs.edit().putString(key(owner, "screen-readings"), readings.toString())
+        Store.prefs.edit().putString(key(owner, "reading-zone"), zone.id)
+            .putString(key(owner, "screen-readings"), readings.toString())
             .putString(key(owner, "yesterday-readings"), yesterday.toString()).apply()
         main.post {
             val active = sleep(owner)
@@ -355,9 +380,11 @@ internal object PhoneTracking {
     }
 
     private fun notifyAtLimit(context: Context, owner: String, day: String, limit: ScreenLimit) {
+        if (Store.trackingOwner() != owner || !automaticEnabled(owner) || limit !in limits(owner)) return
         val manager = context.getSystemService(NotificationManager::class.java)
         val ledger = key(owner, "notified:${limit.id}")
-        if (Store.prefs.getString(ledger, null) == day || !manager.areNotificationsEnabled()) return
+        val delivered = Store.prefs.getString(ledger, null)
+        if ((delivered != null && delivered >= day) || !manager.areNotificationsEnabled()) return
         manager.createNotificationChannel(NotificationChannel(notificationChannel, "Screen-time limits",
             NotificationManager.IMPORTANCE_DEFAULT))
         val open = PendingIntent.getActivity(context, 410, Intent(context, PhoneTrackingActivity::class.java)

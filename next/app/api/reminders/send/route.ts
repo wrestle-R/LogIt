@@ -1,8 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import type { QuerySnapshot } from "firebase-admin/firestore";
-import { sendNotification } from "web-push";
+import { sendNotification, type PushSubscription } from "web-push";
 import { reminderAdmin, remindersConfigured } from "@/lib/web-reminders";
-import { dayKey, reminderProgress, shiftDay } from "@/lib/model.mjs";
+import { reminderProgress } from "@/lib/model.mjs";
+import { dueReminder } from "@/lib/reminder-schedule";
 
 export const dynamic = "force-dynamic";
 
@@ -13,20 +14,19 @@ export async function GET(request: Request) {
   if (given.length !== expected.length || !timingSafeEqual(expected, given)) return new Response(null, { status: 401 });
 
   const now = new Date();
-  const hour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour: "numeric", hourCycle: "h23" }).format(now));
-  const missed = hour >= 9 && hour < 12;
-  if (!missed && hour < 20) return Response.json({ delivered: 0 });
-  const day = shiftDay(dayKey(now), missed ? -1 : 0);
-  const slot = missed ? "lastMissed" : "lastEvening";
   const { db } = reminderAdmin();
   const subscriptions = await db.collection("logitWebReminders").get();
   const users = new Map<string, Promise<QuerySnapshot>>();
   let delivered = 0;
   let failed = 0;
   for (const doc of subscriptions.docs) {
-    const { uid, subscription } = doc.data();
-    if (doc.get(slot) === day) continue;
     try {
+      const { uid, timeZone } = doc.data();
+      const due = dueReminder(now, timeZone);
+      if (!due) continue;
+      const { day, slot } = due;
+      const missed = slot === "lastMissed";
+      if ((doc.get(slot) ?? "") >= day) continue;
       const habits = users.get(uid) || db.collection("habits").where("userId", "==", uid).get();
       users.set(uid, habits);
       const incomplete = (await habits).docs.flatMap(h => {
@@ -36,15 +36,18 @@ export async function GET(request: Request) {
         return [String(habit.name || "Activity").slice(0, 80)];
       });
       if (!incomplete.length) continue;
-      const claimed = await db.runTransaction(async transaction => {
+      const claim = await db.runTransaction(async transaction => {
         const fresh = await transaction.get(doc.ref);
-        if (!fresh.exists || fresh.get(slot) === day) return false;
+        const previousDay = fresh.get(slot) as string | null | undefined;
+        if (!fresh.createTime?.isEqual(doc.createTime) || fresh.get("timeZone") !== timeZone ||
+          (previousDay ?? "") >= day) return null;
+        const subscription = fresh.get("subscription") as PushSubscription;
         transaction.update(doc.ref, { [slot]: day });
-        return true;
+        return { subscription, previousDay };
       });
-      if (!claimed) continue;
+      if (!claim) continue;
       try {
-        await sendNotification(subscription, JSON.stringify({
+        await sendNotification(claim.subscription, JSON.stringify({
           title: missed ? "A goal slipped by" : "Still time for a log",
           body: missed ? `${incomplete.slice(0, 3).join(", ")} came up short. If you forgot to log it, you can still add it.`
             : `${incomplete.slice(0, 3).join(", ")} still ${incomplete.length === 1 ? "has" : "have"} a little room to go.`,
@@ -57,14 +60,22 @@ export async function GET(request: Request) {
         delivered++;
       } catch (error) {
         const status = (error as { statusCode?: number }).statusCode;
-        if (status === 404 || status === 410) await doc.ref.delete();
-        else {
+        if (status === 404 || status === 410 || status === 429) {
           await db.runTransaction(async transaction => {
-            const current = await transaction.get(doc.ref);
-            if (current.get(slot) === day) transaction.update(doc.ref, { [slot]: null });
+            const fresh = await transaction.get(doc.ref);
+            if (!fresh.createTime?.isEqual(doc.createTime) || fresh.get(slot) !== day) return;
+            const subscription = fresh.get("subscription") as PushSubscription;
+            if (status === 429) {
+              transaction.update(doc.ref, { [slot]: claim.previousDay ?? null });
+            } else if (subscription.endpoint === claim.subscription.endpoint &&
+              subscription.keys?.auth === claim.subscription.keys?.auth &&
+              subscription.keys?.p256dh === claim.subscription.keys?.p256dh) {
+              transaction.delete(doc.ref);
+            }
           });
-          failed++;
         }
+        // An ambiguous failure may have reached the browser. Keep its claim to avoid a second send.
+        if (status !== 404 && status !== 410) failed++;
       }
     } catch { failed++; }
   }

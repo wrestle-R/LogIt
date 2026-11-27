@@ -19,6 +19,7 @@ import java.time.format.DateTimeFormatter
 class DetailsActivity : Activity() {
     private var range = 28
     private var selectedHabitId: String? = null
+    private val refreshPage: () -> Unit = { runOnUiThread { if (!isDestroyed && !isFinishing) render() } }
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -28,7 +29,13 @@ class DetailsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        Store.observers.add(refreshPage)
         render()
+    }
+
+    override fun onPause() {
+        Store.observers.remove(refreshPage)
+        super.onPause()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -148,10 +155,14 @@ class DetailsActivity : Activity() {
             })
             val habits = Store.habits.associateBy { it.id }
             installed.forEach { (id, name) ->
-                val config = Widgets.config(id)
+                val config = Widgets.configFor(id, Store.trackingOwner())
                 val activities = Widgets.selectedIds(config).mapNotNull { habits[it]?.name }
                 val surface = if (config.optString("theme") == "light") "Light" else "Dark"
-                val summary = listOf(surface, activities.joinToString(", ")).filter(String::isNotBlank).joinToString(" · ")
+                val summary = when {
+                    config.length() == 0 -> "Setup needed"
+                    activities.isEmpty() -> "Choose activities again"
+                    else -> "$surface · ${activities.joinToString(", ")}"
+                }
                 root.addView(panel().apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
@@ -160,7 +171,7 @@ class DetailsActivity : Activity() {
                         addView(label(name, 15f).apply { typeface = Theme.semibold })
                         addView(label(summary, 13f, Theme.muted))
                     }, LinearLayout.LayoutParams(0, -2, 1f))
-                    addView(quietAction("Edit") {
+                    addView(quietAction(if (activities.isEmpty()) "Set up" else "Edit") {
                         startActivity(Intent(this@DetailsActivity, WidgetConfigActivity::class.java)
                             .putExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_ID, id))
                     }.apply {
@@ -177,7 +188,7 @@ class DetailsActivity : Activity() {
     }
 
     private fun reminderControls(root: LinearLayout): View {
-        root.addView(label("Choose which nudges you want on this phone. Times are in India time.", 14f, Theme.muted))
+        root.addView(label("Choose which reminders you want. Times follow this phone’s clock.", 14f, Theme.muted))
         val main = panel()
 
         fun switchRow(text: String, initial: Boolean, onToggle: (ThemedSwitch, Boolean) -> Unit): ThemedSwitch {
@@ -375,7 +386,7 @@ class DetailsActivity : Activity() {
         val selected = habits.firstOrNull { it.id == selectedHabitId }
         val selectedIndex = selected?.let { habits.indexOf(it) + 1 } ?: 0
         val swatches = intArrayOf(Color.TRANSPARENT) + habits.map { Theme.colors[it.color.coerceIn(Theme.colors.indices)] }.toIntArray()
-        val choices = ChoiceView(this, (listOf("All activities") + habits.map { it.name }).toTypedArray(), selectedIndex, swatches)
+        val choices = ChoiceView(this, (listOf("All activities") + habits.map { it.name }).toTypedArray(), selectedIndex, swatches, "Choose an activity")
         choices.onChange = {
             selectedHabitId = habits.getOrNull(choices.selectedItemPosition - 1)?.id
             render()

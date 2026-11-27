@@ -8,6 +8,10 @@ import android.content.Intent
 import android.os.Build
 import android.os.Process
 import android.os.UserManager
+import android.os.SystemClock
+import android.graphics.drawable.Drawable
+import android.util.LruCache
+import java.util.Locale
 
 internal object AndroidUsage {
     val screenEventsSupported: Boolean get() = Build.VERSION.SDK_INT >= 28
@@ -44,14 +48,40 @@ internal object AndroidUsage {
         return samples.takeIf { it.isNotEmpty() }?.let { UsageTimeline(it, end) }
     }
 
-    fun launchableApps(context: Context): List<UsageApp> {
+    private data class AppCatalog(val apps: List<UsageApp>, val locale: Locale, val at: Long)
+    @Volatile private var catalog: AppCatalog? = null
+    private val icons = LruCache<String, Drawable.ConstantState>(96)
+
+    fun cachedApps(): List<UsageApp>? = catalog?.takeIf {
+        it.locale == Locale.getDefault() && SystemClock.elapsedRealtime() - it.at < 30_000L
+    }?.apps
+
+    // Call from Dispatchers.IO. PackageManager resolves application resources across processes.
+    @Synchronized fun launchableApps(context: Context): List<UsageApp> {
+        cachedApps()?.let { return it }
         val packages = context.packageManager
         val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        return packages.queryIntentActivities(launcher, 0)
+        val locale = Locale.getDefault()
+        val apps = packages.queryIntentActivities(launcher, 0)
+            .asSequence()
             .filter { it.activityInfo.packageName != context.packageName }
+            .distinctBy { it.activityInfo.packageName }
             .map { UsageApp(it.activityInfo.packageName, it.loadLabel(packages).toString()) }
-            .distinctBy(UsageApp::id)
-            .sortedBy { it.label.lowercase(java.util.Locale.ROOT) }
+            .sortedBy { it.label.lowercase(locale) }
+            .toList()
+        icons.evictAll()
+        catalog = AppCatalog(apps, locale, SystemClock.elapsedRealtime())
+        return apps
+    }
+
+    fun cachedIcon(app: UsageApp): Drawable.ConstantState? = icons.get(app.id)
+
+    fun loadIcon(context: Context, app: UsageApp): Drawable.ConstantState? {
+        cachedIcon(app)?.let { return it }
+        val current = catalog
+        val packages = context.packageManager
+        val icon = runCatching { packages.getApplicationIcon(app.id) }.getOrElse { packages.defaultActivityIcon }
+        return icon.constantState?.also { if (catalog === current) icons.put(app.id, it) }
     }
 }
 

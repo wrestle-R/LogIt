@@ -71,7 +71,8 @@ object GoalReminders {
             if (!habit.needsReminder(day)) continue
             val tag = "$owner:${habit.id}:$day:$missed"
             val ledger = "reminder-delivery:$owner:${habit.id}:$missed"
-            if (Store.prefs.getString(ledger, null) == day.toString()) continue
+            val delivered = Store.prefs.getString(ledger, null)
+            if (delivered != null && delivered >= day.toString()) continue
             val open = PendingIntent.getActivity(context, tag.hashCode(), Intent(context, MainActivity::class.java)
                 .putExtra("habit", habit.id), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val message = if (missed) "You came up short. If you forgot to log it, you can still add it."

@@ -8,7 +8,7 @@ import android.widget.Toast
 
 /** A log tap writes the durable local queue; network work runs independently. */
 object WidgetLogging {
-    fun log(context: Context, widgetId: Int, habitId: String?) {
+    fun log(context: Context, widgetId: Int, habitId: String?, expectedOwner: String?) {
         val info = AppWidgetManager.getInstance(context).getAppWidgetInfo(widgetId) ?: return
         if (
             info.provider.className !in
@@ -20,13 +20,21 @@ object WidgetLogging {
             Toast.makeText(context, "Open LogIt and sign in first", Toast.LENGTH_SHORT).show()
             return
         }
-        val config = Widgets.config(widgetId)
-        if (config.optString("owner") != owner) return
+        val config = Widgets.configFor(widgetId, owner)
+        if (owner != expectedOwner) {
+            Widgets.refresh(context)
+            return
+        }
         val selected = Widgets.selectedIds(config)
         if (habitId !in selected) return
-        val habit = Store.habits.find { it.id == habitId } ?: return
-        if (habit.id in PhoneTracking.automatedActivities(owner) && habit.count(Dates.today()) > 0) {
-            Toast.makeText(context, "${habit.name} already logged today", Toast.LENGTH_SHORT).show()
+        val habit = Store.habitsFor(owner).find { it.id == habitId } ?: run {
+            Widgets.refresh(context)
+            Toast.makeText(context, "This activity is unavailable", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (habit.id in PhoneTracking.automatedActivities(owner)) {
+            Widgets.refresh(context)
+            Toast.makeText(context, "Open LogIt to log ${habit.name} manually", Toast.LENGTH_SHORT).show()
             return
         }
         Store.log(habitId, 1, expectedOwner = owner) { error ->
@@ -46,6 +54,7 @@ class WidgetLogReceiver : BroadcastReceiver() {
             context,
             intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1),
             intent.getStringExtra("habit"),
+            intent.getStringExtra("widgetOwner"),
         )
     }
 }

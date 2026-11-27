@@ -2,6 +2,9 @@ package dev.logit.app
 
 import android.app.Application
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
 import com.google.android.gms.tasks.Task
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
@@ -15,6 +18,7 @@ import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.Transaction
 import java.time.LocalDate
+import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
 import org.json.JSONArray
@@ -68,14 +72,37 @@ data class Habit(
 }
 
 object Dates {
-    val zone: ZoneId = ZoneId.of("Asia/Kolkata")
+    val zone: ZoneId get() = ZoneId.systemDefault()
     fun today(): String = LocalDate.now(zone).toString()
+
+    fun startOfDay(day: LocalDate, zone: ZoneId): Instant = day.atStartOfDay(zone).toInstant()
+
+    // Start measuring again when the calendar changes. Old samples must not be
+    // attributed to a second day by replaying them in a different time zone.
+    fun automaticSince(owner: String, source: String, zone: ZoneId, now: Instant): Instant {
+        val key = "automatic-zone:$owner:$source"
+        val previous = Store.prefs.getString(key, "Asia/Kolkata")
+        if (previous != zone.id) {
+            Store.prefs.edit().putString(key, zone.id).putLong("$key:since", now.toEpochMilli()).apply()
+        }
+        return Instant.ofEpochMilli(Store.prefs.getLong("$key:since", 0))
+    }
 }
 
 class LogItApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Store.init(this)
+        androidx.core.content.ContextCompat.registerReceiver(this, object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                Store.notifyChanged()
+                PhoneTracking.refresh()
+            }
+        }, IntentFilter().apply {
+            addAction(Intent.ACTION_DATE_CHANGED)
+            addAction(Intent.ACTION_TIME_CHANGED)
+            addAction(Intent.ACTION_TIMEZONE_CHANGED)
+        }, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 }
 
@@ -86,6 +113,9 @@ object Store {
     private val cacheLock = Any()
     @Volatile private var cache = Cache(null, emptyList())
     private val demoUndo = mutableListOf<LogOp>()
+    private val demoRedo = mutableListOf<LogOp>()
+    private val deleting = java.util.concurrent.ConcurrentHashMap.newKeySet<Pair<String, String>>()
+    private val localWrites = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     lateinit var context: Context
     val habits: List<Habit>
@@ -97,10 +127,12 @@ object Store {
         val pending = if (owner == DEMO) emptyList() else OfflineLogQueue.operations(owner)
         val current = cache
         if (current.owner != owner || trackingOwner() != owner) return emptyList()
-        return if (pending.isEmpty()) current.habits else OfflineLogQueue.project(current.habits, pending)
+        val visible = if (deleting.isEmpty()) current.habits else current.habits.filterNot { (owner to it.id) in deleting }
+        return if (pending.isEmpty()) visible else OfflineLogQueue.project(visible, pending)
     }
 
     var changed: (() -> Unit)? = null
+    internal val observers = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
     var error: ((String) -> Unit)? = null
     private var listener: ListenerRegistration? = null
     private var listenerGeneration = 0
@@ -126,6 +158,8 @@ object Store {
 
     val ready
         get() = trackingOwner() != null
+
+    fun hasPendingDeletes(): Boolean = deleting.any { it.first == trackingOwner() }
 
     fun init(c: Context) {
         context = c.applicationContext
@@ -182,8 +216,9 @@ object Store {
     }
 
     internal fun notifyChanged() {
-        Widgets.refresh(context)
         changed?.invoke()
+        observers.forEach { it() }
+        Widgets.refresh(context)
     }
 
     private fun encode(habits: List<Habit>): String = JSONArray(habits.map { h ->
@@ -288,7 +323,9 @@ object Store {
                         updateCache(owner) { latest }
                         if (!snap.metadata.isFromCache && !snap.metadata.hasPendingWrites()) {
                             try {
-                                OfflineLogQueue.discardMissing(owner, latest.map(Habit::id).toSet())
+                                val ids = latest.map(Habit::id).toSet()
+                                OfflineLogQueue.discardMissing(owner, ids)
+                                PhoneTracking.reconcileActivities(owner, ids)
                             } catch (e: Exception) {
                                 error?.invoke(e.localizedMessage ?: "Could not update local log history")
                             }
@@ -436,26 +473,45 @@ object Store {
     }
 
     fun delete(id: String, done: (String?) -> Unit) {
-        when (val owner = trackingOwner()) {
-            null -> done("Sign in first")
-            DEMO -> localChange(done) {
-                check(updateCache(owner, durable = true) { habits ->
-                    demoUndo.removeAll { it.habit == id }
-                    habits.filterNot { it.id == id }
-                }) { "Account changed" }
-            }
-            else -> ownedTransaction(owner, id) { tx, ref, _ ->
-                tx.delete(ref)
-            }.addOnSuccessListener {
-                localChange(done) {
-                    forgetActivity(owner, id)
-                    OfflineLogQueue.discardActivity(owner, id)
-                    check(trackingOwner() == owner) { "Account changed" }
-                }
-            }.addOnFailureListener {
-                done(it.localizedMessage ?: "Could not delete the activity")
+        val owner = trackingOwner() ?: return done("Sign in first")
+        val key = owner to id
+        if (!deleting.add(key)) return
+        notifyChanged()
+        fun finish(problem: String?) {
+            deleting.remove(key)
+            if (trackingOwner() == owner) {
+                notifyChanged()
+                done(problem)
             }
         }
+        fun commitLocal() {
+            // The authoritative delete has succeeded. A cleanup error must not
+            // put the activity back or invite a second delete.
+            updateCache(owner) { habits -> habits.filterNot { it.id == id } }
+            runCatching {
+                if (owner == DEMO) synchronized(cacheLock) {
+                    demoUndo.removeAll { it.habit == id }
+                    demoRedo.removeAll { it.habit == id }
+                }
+                else OfflineLogQueue.discardActivity(owner, id)
+                if (trackingOwner() == owner) PhoneTracking.removeActivity(owner, id)
+            }.onFailure { if (trackingOwner() == owner) error?.invoke("Activity deleted. Some local settings couldn’t be updated.") }
+            finish(null)
+        }
+        if (owner == DEMO) {
+            localWrites.execute {
+                val succeeded = runCatching {
+                    updateCache(owner, durable = true) { habits -> habits.filterNot { it.id == id } }
+                }.getOrDefault(false)
+                androidx.core.content.ContextCompat.getMainExecutor(context).execute {
+                    if (succeeded) commitLocal() else finish("Couldn’t delete the activity on this device.")
+                }
+            }
+            return
+        }
+        ownedTransaction(owner, id) { tx, ref, _ -> tx.delete(ref) }
+            .addOnSuccessListener { commitLocal() }
+            .addOnFailureListener { finish("Couldn’t delete the activity. Check your connection and try again.") }
     }
 
     fun saveSleepSummary(
@@ -534,9 +590,10 @@ object Store {
             if (owner == DEMO) {
                 changeDemoLog(id) { h ->
                     if (delta > 0) {
+                        demoRedo.clear()
                         demoUndo.add(LogOp(UUID.randomUUID().toString(), owner, id, day, delta, automatic = setOnce))
                     } else if (delta < 0 && demoUndo.lastOrNull()?.let { it.habit == id && it.day == day } == true) {
-                        demoUndo.removeAt(demoUndo.lastIndex)
+                        demoRedo.add(demoUndo.removeAt(demoUndo.lastIndex))
                     }
                     if (setOnce) OfflineLogQueue.applyToHabit(h, demoUndo.last())
                     else OfflineLogQueue.delta(h, day, delta)
@@ -578,6 +635,12 @@ object Store {
         else -> OfflineLogQueue.lastLog(owner)
     }
 
+    fun lastRedo(): LogOp? = when (val owner = trackingOwner()) {
+        null -> null
+        DEMO -> synchronized(cacheLock) { demoRedo.lastOrNull() }
+        else -> OfflineLogQueue.redoHistory(owner).lastOrNull()
+    }
+
     fun undoLast(expectedId: String, done: (String?) -> Unit) {
         val owner = trackingOwner()
         if (owner == null) {
@@ -586,15 +649,31 @@ object Store {
         }
         localChange(done) {
             if (owner == DEMO) {
-                check(updateCache(owner, durable = true) { habits ->
+                synchronized(cacheLock) {
                     val op = OfflineLogQueue.reversal(demoUndo, expectedId)
-                    check(habits.any { it.id == op.habit && it.count(op.day) > 0 }) {
-                        "That completion is no longer available"
+                    changeDemoLog(op.habit) { habit ->
+                        check(habit.count(op.day) > 0) { "That completion is no longer available" }
+                        OfflineLogQueue.applyToHabit(habit, op)
                     }
-                    demoUndo.removeAt(demoUndo.lastIndex)
-                    habits.map { if (it.id == op.habit) OfflineLogQueue.applyToHabit(it, op) else it }
-                }) { "Account changed" }
+                    demoRedo.add(demoUndo.removeAt(demoUndo.lastIndex))
+                }
             } else OfflineLogQueue.undo(owner, expectedId)
+        }
+    }
+
+    fun redoLast(expectedId: String, done: (String?) -> Unit) {
+        val owner = trackingOwner()
+        if (owner == null) {
+            done("Sign in first")
+            return
+        }
+        localChange(done) {
+            if (owner == DEMO) synchronized(cacheLock) {
+                val op = UndoHistory.reapply(demoRedo, expectedId)
+                changeDemoLog(op.habit) { OfflineLogQueue.applyToHabit(it, op) }
+                demoRedo.removeAt(demoRedo.lastIndex)
+                demoUndo.add(op)
+            } else OfflineLogQueue.redo(owner, expectedId)
         }
     }
 

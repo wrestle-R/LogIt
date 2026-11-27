@@ -310,7 +310,7 @@ class HeatmapView(
     private var bitmap: Bitmap? = null
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        bitmap = Theme.graph(habit, weeks, w, h, binary = binary)
+        if (w > 0 && h > 0) bitmap = Theme.graph(habit, weeks, w, h, binary = binary)
     }
 
     override fun onDraw(canvas: Canvas) {

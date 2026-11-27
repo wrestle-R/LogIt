@@ -5,6 +5,8 @@ import android.app.Dialog
 import android.content.DialogInterface
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.RippleDrawable
+import android.content.res.ColorStateList
 import android.view.Gravity
 import android.view.View
 import android.view.Window
@@ -24,7 +26,7 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
             letterSpacing = -.015f
             setPadding(0, 0, 0, 0)
         }
-    private val message = owner.label("", 14f, Theme.muted).apply {
+    private val message = owner.label("", 15f, Theme.muted).apply {
         setPadding(0, 0, 0, 0)
     }
     private val bodyContainer = LinearLayout(owner).apply {
@@ -47,7 +49,10 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
     private val actions =
         LinearLayout(owner).apply {
             gravity = Gravity.END
-            setPadding(0, owner.dp(18), 0, 0)
+            val stack = owner.resources.configuration.fontScale > 1.25f ||
+                owner.resources.configuration.screenWidthDp < 340
+            orientation = if (stack) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            setPadding(0, owner.dp(12), 0, 0)
         }
     private val buttons = mutableMapOf<Int, Button>()
 
@@ -112,10 +117,10 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
                     textSize = 14f
                     minWidth = 0
                     minimumWidth = 0
-                    minHeight = owner.dp(44)
-                    minimumHeight = owner.dp(44)
+                    minHeight = owner.dp(48)
+                    minimumHeight = owner.dp(48)
                     stateListAnimator = null
-                    setPadding(owner.dp(16), 0, owner.dp(16), 0)
+                    setPadding(owner.dp(12), owner.dp(8), owner.dp(12), owner.dp(8))
                     if (which == DialogInterface.BUTTON_NEGATIVE) {
                         background = Theme.bordered(
                             Theme.track,
@@ -133,8 +138,12 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
         buttons[which] = button
         actions.addView(
             button,
-            LinearLayout.LayoutParams(0, owner.dp(44), 1f).apply {
-                if (actions.childCount > 0) marginStart = owner.dp(10)
+            if (actions.orientation == LinearLayout.VERTICAL) {
+                LinearLayout.LayoutParams(-1, -2).apply {
+                    if (actions.childCount > 0) topMargin = owner.dp(8)
+                }
+            } else LinearLayout.LayoutParams(0, -2, 1f).apply {
+                if (actions.childCount > 0) marginStart = owner.dp(8)
             },
         )
     }
@@ -180,6 +189,7 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
 
         private var entries: Array<String>? = null
         private var selected = -1
+        private var swatches: IntArray? = null
         private var choice: ((DialogInterface, Int) -> Unit)? = null
 
         fun setItems(items: Array<String>, f: (DialogInterface, Int) -> Unit) = apply {
@@ -190,10 +200,12 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
         fun setSingleChoiceItems(
             items: Array<String>,
             current: Int,
+            colours: IntArray? = null,
             f: (DialogInterface, Int) -> Unit,
         ) = apply {
             entries = items
             selected = current
+            swatches = colours
             choice = f
         }
 
@@ -207,21 +219,32 @@ class PrettyDialog(private val owner: Activity) : Dialog(owner) {
                 items.forEachIndexed { index, text ->
                     val isSelected = selected == index
                     val row =
-                        a.label(if (isSelected) "✓  $text" else text, 15f).apply {
+                        LinearLayout(a).apply {
                             gravity = Gravity.CENTER_VERTICAL
-                            setPadding(a.dp(14), 0, a.dp(14), 0)
-                            setTextColor(Theme.text)
+                            minimumHeight = a.dp(48)
+                            setPadding(a.dp(12), a.dp(8), a.dp(12), a.dp(8))
+                            val swatch = swatches?.getOrNull(index) ?: Color.TRANSPARENT
+                            if (swatch != Color.TRANSPARENT) addView(View(a).apply {
+                                background = Theme.shape(swatch, a.dp(5).toFloat())
+                            }, LinearLayout.LayoutParams(a.dp(10), a.dp(10)).apply { marginEnd = a.dp(8) })
+                            addView(a.label(text, 15f), LinearLayout.LayoutParams(0, -2, 1f))
+                            if (isSelected) addView(a.label("✓", 16f).apply {
+                                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                            })
                             background =
                                 if (isSelected)
                                     Theme.bordered(Theme.bg, Theme.controlBorder, a.dp(10).toFloat(), a.dp(1))
                                 else null
+                            foreground = RippleDrawable(ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
+                                null, Theme.shape(Color.WHITE, a.dp(10).toFloat()))
+                            this.isSelected = isSelected
                             isFocusable = true
                             setOnClickListener {
                                 choice?.invoke(d, index)
                                 d.dismiss()
                             }
                         }
-                    list.addView(row, LinearLayout.LayoutParams(-1, a.dp(48)).apply {
+                    list.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
                         if (index > 0) topMargin = a.dp(4)
                     })
                 }

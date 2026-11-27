@@ -11,6 +11,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.*
+import androidx.core.widget.doAfterTextChanged
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -208,59 +209,51 @@ fun Activity.editActivity(
     refreshSegments()
 
     if (habit == null && onCreated == null) {
-        fields.addView(LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            addView(fieldLabel("Templates & tracking").apply { setPadding(0, 0, 0, 0) },
-                LinearLayout.LayoutParams(0, -2, 1f))
-            addView(quietAction("Health Connect") {
-                dialog.dismiss()
-                openTracking("health", activityName = name.text.toString().trim())
-            }.apply {
-                setTextColor(Theme.text)
-                setPadding(dp(8), dp(4), dp(4), dp(4))
-                minHeight = dp(44)
-                minimumHeight = dp(44)
-            }, LinearLayout.LayoutParams(-2, -2))
-        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        val shortcuts = LinearLayout(this)
-        val routes = listOf("Sleep" to "sleep", "App use" to "apps", "Screen time" to "limits")
-        for ((title, route) in routes) {
-            val shortcut = quietAction(title) {
-                dialog.dismiss()
-                openTracking(route, activityName = name.text.toString().trim())
-            }.apply {
-                setTextColor(Theme.text)
-                gravity = Gravity.CENTER
-                setPadding(dp(4), dp(6), dp(4), dp(6))
-                minHeight = dp(44)
-                minimumHeight = dp(44)
-                maxLines = 2
-                background = RippleDrawable(
-                    ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
-                    Theme.shape(Theme.track, dp(9).toFloat()),
-                    null,
-                )
+        fields.addView(fieldLabel("Set up automatic tracking", topDp = 12))
+        val routes = listOf("Health Connect" to "health", "Sleep" to "sleep", "App use" to "apps", "Screen time" to "limits")
+        for (pair in routes.chunked(2)) {
+            val shortcuts = LinearLayout(this)
+            for ((title, route) in pair) {
+                val shortcut = quietAction("$title ›") {
+                    dialog.dismiss()
+                    openTracking(route, activityName = name.text.toString().trim())
+                }.apply {
+                    contentDescription = title
+                    setTextColor(Theme.text)
+                    gravity = Gravity.CENTER
+                    setPadding(dp(8), dp(6), dp(8), dp(6))
+                    minHeight = dp(48)
+                    minimumHeight = dp(48)
+                    background = RippleDrawable(
+                        ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
+                        Theme.bordered(Theme.track, Theme.controlBorder, dp(9).toFloat(), dp(1)),
+                        null,
+                    )
+                }
+                shortcuts.addView(shortcut, LinearLayout.LayoutParams(0, -1, 1f).apply {
+                    if (shortcuts.childCount > 0) marginStart = dp(6)
+                })
             }
-            shortcuts.addView(shortcut, LinearLayout.LayoutParams(0, -1, 1f).apply {
-                if (shortcuts.childCount > 0) marginStart = dp(6)
-            })
+            fields.addView(shortcuts, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
         }
-        fields.addView(shortcuts, LinearLayout.LayoutParams(-1, -2))
     }
     val action = when {
         onCreated != null -> "Create & select"
-        habit == null -> "Add activity"
+        habit == null -> "Create activity"
         else -> "Save changes"
     }
     dialog = PrettyDialog.Builder(this)
         .setTitle(if (onCreated != null) "Create activity" else if (habit == null) "New activity" else "Edit activity")
+        .apply { if (habit == null && onCreated == null) setMessage("A goal is optional. You can change it anytime.") }
         .setView(fields)
         .setNegativeButton("Cancel", null)
         .setPositiveButton(action, null)
         .apply { if (onCreated != null) setCompact() }
         .create()
 
+    var saving = false
     fun submit() {
+        if (saving) return
         val title = name.text.toString().trim()
         if (title.isEmpty()) {
             nameError.text = "Give this activity a name"
@@ -283,6 +276,7 @@ fun Activity.editActivity(
         else Goal(values[selected], target!!, Dates.today())
         val save = dialog.getButton(-1)
         if (!save.isEnabled) return
+        saving = true
         save.isEnabled = false
         val done: (String?, String?) -> Unit = { id, problem ->
             if (problem == null) {
@@ -290,7 +284,8 @@ fun Activity.editActivity(
                 if (id != null) onCreated?.invoke(id)
                 if (goal != null && onCreated == null) GoalReminders.offer(this)
             } else {
-                save.isEnabled = true
+                saving = false
+                save.isEnabled = habit != null || name.text.isNotBlank()
                 Toast.makeText(this, problem, Toast.LENGTH_LONG).show()
             }
         }
@@ -307,7 +302,19 @@ fun Activity.editActivity(
         if (actionId == EditorInfo.IME_ACTION_DONE) { submit(); true } else false
     }
     dialog.setOnShowListener {
-        dialog.getButton(-1).setOnClickListener { submit() }
+        val save = dialog.getButton(-1)
+        save.setOnClickListener { submit() }
+        if (habit == null) {
+            fun updateSave() {
+                val named = name.text.isNotBlank()
+                save.isEnabled = named && !saving
+                save.background = if (named) Theme.shape(Theme.text, dp(10).toFloat())
+                    else Theme.bordered(Theme.track, Theme.controlBorder, dp(10).toFloat(), dp(1))
+                save.setTextColor(if (named) Theme.bg else Theme.muted)
+            }
+            name.doAfterTextChanged { updateSave() }
+            updateSave()
+        }
         if (habit == null) name.requestFocus()
     }
     dialog.show()

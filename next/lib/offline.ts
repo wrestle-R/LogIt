@@ -33,16 +33,20 @@ export function enqueue(
   habit: string,
   day: string,
   delta: number,
+  id = crypto.randomUUID(),
 ) {
+  const key = `logit-op:${owner}:${id}`;
+  const existing = localStorage.getItem(key);
+  if (existing !== null) return JSON.parse(existing) as PendingLog & { createdAt: number };
   const op = {
-    id: crypto.randomUUID(),
+    id,
     owner,
     habit,
     day,
     delta,
     createdAt: Date.now() + (performance.now() % 1),
   };
-  localStorage.setItem(`logit-op:${owner}:${op.id}`, JSON.stringify(op));
+  localStorage.setItem(key, JSON.stringify(op));
   return op;
 }
 export function project<

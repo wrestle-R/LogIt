@@ -31,6 +31,8 @@ class LogGraphWidget : BaseWidget()
 
 object Widgets {
     private val providers = listOf(QuickWidget::class.java, GraphWidget::class.java, LogGraphWidget::class.java)
+    private val rendering = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val refreshQueued = java.util.concurrent.atomic.AtomicBoolean()
 
     fun config(id: Int) = runCatching {
         org.json.JSONObject(Store.prefs.getString("widget_$id", "{}").orEmpty())
@@ -45,23 +47,29 @@ object Widgets {
 
     fun installed(c: Context): List<Pair<Int, String>> {
         val manager = AppWidgetManager.getInstance(c)
-        val owner = Store.trackingOwner() ?: return emptyList()
+        if (!Store.ready) return emptyList()
         return providers.zip(listOf("Quick log", "Heatmap", "Heatmap + log")).flatMap { (provider, label) ->
-            manager.getAppWidgetIds(ComponentName(c, provider)).asList().mapNotNull { id ->
-                if (config(id).optString("owner") == owner) id to label else null
+            manager.getAppWidgetIds(ComponentName(c, provider)).map { id -> id to label }
+        }
+    }
+
+    fun configFor(id: Int, owner: String?): org.json.JSONObject =
+        config(id).takeIf { owner != null && it.optString("owner") == owner } ?: org.json.JSONObject()
+
+    fun refresh(c: Context) {
+        if (!refreshQueued.compareAndSet(false, true)) return
+        val context = c.applicationContext
+        rendering.execute {
+            refreshQueued.set(false)
+            SleepWidget.refresh(context)
+            val manager = AppWidgetManager.getInstance(context)
+            providers.forEach { provider ->
+                manager.getAppWidgetIds(ComponentName(context, provider)).forEach { update(context, manager, it) }
             }
         }
     }
 
-    fun refresh(c: Context) {
-        SleepWidget.refresh(c)
-        val m = AppWidgetManager.getInstance(c)
-        providers.forEach { cls ->
-                m.getAppWidgetIds(ComponentName(c, cls)).forEach { update(c, m, it) }
-            }
-    }
-
-    private fun click(c: Context, id: Int, habit: String?, log: Boolean): PendingIntent {
+    private fun click(c: Context, id: Int, habit: String?, log: Boolean, healthAccess: Boolean = false): PendingIntent {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         if (log)
             return PendingIntent.getBroadcast(
@@ -70,22 +78,35 @@ object Widgets {
                 Intent(c, WidgetLogReceiver::class.java)
                     .setAction("widget-log:$id:$habit")
                     .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                    .putExtra("widgetOwner", Store.trackingOwner())
                     .putExtra("habit", habit),
                 flags,
             )
-        return PendingIntent.getActivity(
-            c,
-            0,
+        val intent = if (healthAccess) {
+            Intent(c, PhoneTrackingActivity::class.java)
+                .setAction("widget-health-access:$id:$habit")
+                .putExtra("trackingScreen", "health")
+                .putExtra("widgetOwner", Store.trackingOwner())
+        } else {
             Intent(c, MainActivity::class.java)
                 .setAction("widget-open:$id:$habit")
                 .putExtra("habit", habit)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
-            flags,
-        )
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return PendingIntent.getActivity(c, 0, intent, flags)
     }
 
-    fun update(c: Context, m: AppWidgetManager, id: Int) {
-        if (m.getAppWidgetInfo(id) == null) return
+    private fun setupClick(c: Context, id: Int, signedIn: Boolean): PendingIntent {
+        val intent = if (signedIn) Intent(c, WidgetConfigActivity::class.java)
+            .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+        else Intent(c, MainActivity::class.java)
+        return PendingIntent.getActivity(c, id, intent.setAction("widget-setup:$id")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    }
+
+    @Synchronized fun update(c: Context, m: AppWidgetManager, id: Int) {
+        val info = m.getAppWidgetInfo(id) ?: return
+        val owner = Store.trackingOwner()
         val options = m.getAppWidgetOptions(id)
         if (android.os.Build.VERSION.SDK_INT >= 31) {
             val sizes =
@@ -97,70 +118,93 @@ object Widgets {
                     ?.filter { it.width > 0 && it.height > 0 }
                     ?.take(4)
             if (!sizes.isNullOrEmpty()) {
-                m.updateAppWidget(
-                    id,
-                    RemoteViews(
-                        sizes.associateWith { size ->
-                            create(c, m, id, size.width.toInt(), size.height.toInt())
-                        }
-                    ),
-                )
+                val views = RemoteViews(sizes.associateWith { size ->
+                    create(c, info, id, size.width.toInt(), size.height.toInt(), owner)
+                })
+                if (Store.trackingOwner() == owner) m.updateAppWidget(id, views)
                 return
             }
         }
-        m.updateAppWidget(
-            id,
-            create(
-                c,
-                m,
-                id,
-                options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 300),
-                options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 180),
-            ),
+        val views = create(
+            c, info, id,
+            options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 300),
+            options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 180),
+            owner,
         )
+        if (Store.trackingOwner() == owner) m.updateAppWidget(id, views)
     }
 
     private fun create(
         c: Context,
-        m: AppWidgetManager,
+        info: AppWidgetProviderInfo,
         id: Int,
         requestedWidth: Int,
         requestedHeight: Int,
+        owner: String?,
     ): RemoteViews {
-        val info = m.getAppWidgetInfo(id)!!
-        val kind = info.provider.shortClassName
-        val quick = kind.endsWith("QuickWidget")
-        val log = kind.endsWith("LogGraphWidget")
-        val config = config(id)
-        val owner = Store.trackingOwner()
-        val activities = Store.habits.associateBy { it.id }
+        val provider = info.provider.shortClassName
+        val kind = when {
+            provider.endsWith("QuickWidget") -> "quick"
+            provider.endsWith("LogGraphWidget") -> "log"
+            else -> "graph"
+        }
+        return render(c, kind, id, requestedWidth, requestedHeight, owner, configFor(id, owner))
+    }
+
+    fun preview(
+        context: Context, kind: String, width: Int, height: Int,
+        owner: String, ids: List<String>, light: Boolean,
+    ): RemoteViews {
+        val config = org.json.JSONObject()
+            .put("ids", org.json.JSONArray(ids))
+            .put("theme", if (light) "light" else "dark")
+        return render(context, kind, AppWidgetManager.INVALID_APPWIDGET_ID, width, height, owner, config)
+    }
+
+    private fun render(
+        c: Context, kind: String, id: Int, requestedWidth: Int, requestedHeight: Int,
+        owner: String?, config: org.json.JSONObject,
+    ): RemoteViews {
+        val quick = kind == "quick"
+        val log = kind == "log"
+        val interactive = id != AppWidgetManager.INVALID_APPWIDGET_ID
+        val activities = owner?.let(Store::habitsFor).orEmpty().associateBy { it.id }
         val automated = owner?.let(PhoneTracking::automatedActivities).orEmpty()
-        val hs = if (owner != null && config.optString("owner") == owner)
-            selectedIds(config).distinct().mapNotNull(activities::get)
-        else emptyList()
-        val rv = RemoteViews(c.packageName, R.layout.widget)
-        rv.removeAllViews(R.id.rows)
-        rv.setViewVisibility(R.id.overflow_hint, View.GONE)
-        rv.setOnClickPendingIntent(R.id.root, click(c, id, null, false))
+        val healthAccessNeeded = owner?.let(HealthTracking::activitiesNeedingAccess).orEmpty()
+        val hs = selectedIds(config).distinct().mapNotNull(activities::get)
         val light = config.optString("theme", "dark") == "light"
         val fg = if (light) 0xff18181b.toInt() else 0xfffafafa.toInt()
         val muted = if (light) 0xff52525b.toInt() else 0xffa1a1aa.toInt()
+        val background = if (light) R.drawable.widget_bg_light else R.drawable.widget_bg
+        if (hs.isEmpty()) {
+            val message = when {
+                !interactive -> "No activities selected"
+                owner == null -> "Sign in to LogIt"
+                config.length() == 0 -> "Set up widget"
+                activities.isEmpty() -> "Add an activity in LogIt"
+                else -> "Choose activities again"
+            }
+            val detail = if (!interactive) "Select an activity to preview" else if (owner == null) "Open LogIt" else "Tap to continue"
+            return RemoteViews(c.packageName, R.layout.widget_setup).apply {
+                setInt(R.id.widget_setup, "setBackgroundResource", background)
+                setTextViewText(R.id.widget_setup_title, message)
+                setTextColor(R.id.widget_setup_title, fg)
+                setTextViewText(R.id.widget_setup_detail, detail)
+                setTextColor(R.id.widget_setup_detail, muted)
+                setViewVisibility(R.id.widget_setup_detail, if (!interactive || requestedHeight >= 92) View.VISIBLE else View.GONE)
+                if (interactive) setOnClickPendingIntent(R.id.widget_setup, setupClick(c, id, owner != null))
+            }
+        }
+        val rv = RemoteViews(c.packageName, R.layout.widget)
+        rv.removeAllViews(R.id.rows)
+        rv.setViewVisibility(R.id.overflow_hint, View.GONE)
+        if (interactive) rv.setOnClickPendingIntent(R.id.root, click(c, id, null, false))
         rv.setInt(
             R.id.root,
             "setBackgroundResource",
-            if (light) R.drawable.widget_bg_light else R.drawable.widget_bg,
+            background,
         )
-        if (hs.isEmpty()) {
-            val row = RemoteViews(c.packageName, R.layout.widget_row)
-            row.setTextViewText(
-                R.id.title,
-                if (Store.ready) "Configure LogIt widget" else "Open LogIt to sign in",
-            )
-            row.setTextColor(R.id.title, fg)
-            row.setViewVisibility(R.id.plot, View.GONE)
-            row.setViewVisibility(R.id.quick_log, View.GONE)
-            rv.addView(R.id.rows, row)
-        } else {
+        run {
             val width = requestedWidth.coerceAtLeast(100)
             val height = requestedHeight.coerceAtLeast(60)
             val weeks = 52
@@ -180,7 +224,7 @@ object Widgets {
                 rv.setViewVisibility(R.id.overflow_hint, View.VISIBLE)
                 rv.setTextViewText(R.id.overflow_hint, "+${hs.size - shown.size} more")
                 rv.setTextColor(R.id.overflow_hint, muted)
-                rv.setOnClickPendingIntent(R.id.overflow_hint, click(c, id, null, false))
+                if (interactive) rv.setOnClickPendingIntent(R.id.overflow_hint, click(c, id, null, false))
             }
             var band: RemoteViews? = null
             shown.forEachIndexed { index, h ->
@@ -204,7 +248,15 @@ object Widgets {
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT.toFloat(),
                         android.util.TypedValue.COMPLEX_UNIT_PX,
                     )
+                val automatic = h.id in automated
+                val needsHealthAccess = h.id in healthAccessNeeded
+                val quickLog = quick && !automatic
                 if (quick) {
+                    row.setTextViewText(R.id.quick_hint, when {
+                        quickLog -> "Tap to log"
+                        needsHealthAccess -> "Manage access"
+                        else -> "Open activity"
+                    })
                     row.setViewVisibility(
                         R.id.quick_hint,
                         if (height < 100) View.GONE else View.VISIBLE,
@@ -219,21 +271,29 @@ object Widgets {
                     )
                 }
                 row.setTextViewText(R.id.title, h.name)
-                row.setTextViewText(R.id.count, h.widgetTodayLabel(h.id in automated))
+                row.setTextViewText(R.id.count, when {
+                    needsHealthAccess -> "Access needed"
+                    automatic && h.count(Dates.today()) == 0L -> "Auto tracking"
+                    else -> h.widgetTodayLabel(automatic)
+                })
                 row.setTextColor(R.id.title, fg)
                 row.setTextColor(R.id.count, muted)
-                row.setOnClickPendingIntent(R.id.row, click(c, id, h.id, quick))
+                if (interactive) row.setOnClickPendingIntent(R.id.row, click(c, id, h.id, quickLog, needsHealthAccess))
                 row.setViewVisibility(R.id.quick_log, if (quick) View.VISIBLE else View.GONE)
                 row.setViewVisibility(R.id.plot, if (layout.showGraph) View.VISIBLE else View.GONE)
-                row.setViewVisibility(R.id.overlay_log, if (log && layout.showGraph) View.VISIBLE else View.GONE)
+                row.setViewVisibility(R.id.overlay_log, if (log && !automatic && layout.showGraph) View.VISIBLE else View.GONE)
                 row.setContentDescription(
                     R.id.row,
-                    if (quick) "Log ${h.name} for today" else "Open ${h.name} in LogIt",
+                    when {
+                        quickLog -> "Log ${h.name} for today"
+                        needsHealthAccess -> "Manage health access for ${h.name}"
+                        else -> "Open ${h.name} in LogIt"
+                    },
                 )
-                row.setContentDescription(R.id.quick_log, "Open ${h.name} in LogIt")
+                row.setContentDescription(R.id.quick_log, if (needsHealthAccess) "Manage health access" else "Open ${h.name} in LogIt")
                 row.setContentDescription(R.id.overlay_log, "Log ${h.name} for today")
-                row.setOnClickPendingIntent(R.id.quick_log, click(c, id, h.id, false))
-                row.setOnClickPendingIntent(R.id.overlay_log, click(c, id, h.id, true))
+                if (interactive) row.setOnClickPendingIntent(R.id.quick_log, click(c, id, h.id, false, needsHealthAccess))
+                if (interactive) row.setOnClickPendingIntent(R.id.overlay_log, click(c, id, h.id, true))
                 if (!quick) {
                     if (compact) row.setViewPadding(R.id.row, 0, 0, 0, 0)
                     row.setViewVisibility(
@@ -299,7 +359,7 @@ object Widgets {
                         if (h.id in automated) "${h.name}: recent completions. Open activity."
                         else "${h.name}: recent history, ${h.total()} total logs. Open activity.",
                     )
-                    row.setOnClickPendingIntent(R.id.graph, click(c, id, h.id, false))
+                    if (interactive) row.setOnClickPendingIntent(R.id.graph, click(c, id, h.id, false, needsHealthAccess))
                 }
                 if (multiGrid) {
                     // Static cells keep every action independent without a scrolling collection.
@@ -323,8 +383,13 @@ class PinReceiver : BroadcastReceiver() {
             )
         val config = i.getStringExtra("config") ?: return
         if (id == AppWidgetManager.INVALID_APPWIDGET_ID) return
+        val expectedProvider = i.getStringExtra("provider") ?: return
+        val manager = AppWidgetManager.getInstance(c)
+        if (manager.getAppWidgetInfo(id)?.provider?.className != expectedProvider) return
+        val owner = runCatching { org.json.JSONObject(config).optString("owner") }.getOrNull()
+        if (owner != Store.trackingOwner() || Widgets.config(id).length() != 0) return
         Store.prefs.edit().putString("widget_$id", config).apply()
-        Widgets.update(c, AppWidgetManager.getInstance(c), id)
+        Widgets.update(c, manager, id)
     }
 }
 

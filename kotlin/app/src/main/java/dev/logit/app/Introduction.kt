@@ -17,12 +17,13 @@ internal object Introduction {
     private val steps = listOf(
         Step("home", "Make your first activity", "Tap Add to name something you want to do regularly. Each activity gets its own colour and history."),
         Step("home", "Set a goal", "Use Goal frequency when you add or edit an activity. Pick a daily or weekly target, or leave it open."),
+        Step("home", "Log from a graph", "Double-tap or hold an activity graph to choose a date and add a log. Undo takes back your latest log. Redo restores it on the original date."),
         Step("widgets", "Put LogIt on your home screen", "Choose a widget layout, select your activities and add it to your launcher. Resize it to show more history or activities."),
         Step("reminders", "Get goal reminders", "Turn on notifications here to get a nudge before a goal is due, or a follow-up if you miss it."),
-        Step("apps", "Log from app use", "Link an app and choose Opened or a time threshold. LogIt completes the activity once per day when you meet the rule."),
-        Step("limits", "Stay under a screen time limit", "Set a limit for an app group or your whole phone. Link an activity to complete it when a tracked day ends under the limit."),
-        Step("sleep", "Track sleep", "Set a minimum sleep goal. Record a night yourself, estimate it from phone inactivity, or import it through Health Connect."),
-        Step("health", "Import health activity", "Health Connect can log steps, workouts or sleep after you choose a rule and grant access. On automatic activities, double-tap the card or use Log manually in its menu."),
+        Step("apps", "Automate app use", "Link an app and choose Opened or a time threshold. After you grant usage access, LogIt completes the activity once per day when you meet the rule."),
+        Step("limits", "Automate screen time goals", "Set a limit for an app group or your whole phone. Link an activity to mark it complete when a tracked day ends under the limit."),
+        Step("sleep", "Track sleep", "Choose a sleep goal. Record a night yourself, estimate it from phone inactivity, or import it through Health Connect."),
+        Step("health", "Automate health activity", "Grant Health Connect access and choose targets for steps, workouts, or sleep. Automated graphs show whether each day is complete."),
     )
     private var owner: String? = null
     private var index = 0
@@ -43,11 +44,15 @@ internal object Introduction {
     }
 
     @Suppress("DEPRECATION")
-    fun show(activity: Activity, screen: String, anchor: View?, goalAnchor: View? = null) {
+    fun show(activity: Activity, screen: String, anchor: View?, goalAnchor: View? = null, graphAnchor: View? = null) {
         if (owner == null || owner != Store.trackingOwner()) return
         val step = steps[index]
         if (step.screen != screen) return
-        val target = if (index == 1) goalAnchor ?: anchor else anchor
+        val target = when (index) {
+            1 -> goalAnchor ?: anchor
+            2 -> graphAnchor ?: anchor
+            else -> anchor
+        }
         val frame = activity.findViewById<FrameLayout>(android.R.id.content)
         if (frame.findViewWithTag<View>(overlayTag) != null) return
         val content = frame.getChildAt(0)
@@ -67,7 +72,7 @@ internal object Introduction {
             index = next
             val nextScreen = steps[index].screen
             if (nextScreen == screen) {
-                show(activity, screen, anchor, goalAnchor)
+                show(activity, screen, anchor, goalAnchor, graphAnchor)
             } else if (nextScreen == "home") {
                 activity.finish()
                 activity.overridePendingTransition(0, 0)

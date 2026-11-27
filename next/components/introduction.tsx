@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button";
 const steps = [
   { target: "add", title: "Make your first activity", copy: "Add an activity, give it a name, and start filling in its history." },
   { target: "goal", title: "Set a goal", copy: "Choose a daily or weekly target when you add or edit an activity." },
+  { target: "log-history", title: "Log from a graph", copy: "Double-click, double-tap, or hold a graph to choose a log date. Undo takes back a log. Redo restores it on the original date." },
   { target: "reminders", title: "Get goal reminders", copy: "Open Goal reminders to get a nudge before a goal is due or a follow-up if you miss one." },
-  { target: "android", title: "Widgets and phone tracking", copy: "Use LogIt on Android to add home screen widgets, link app use and screen time, track sleep, or import health activity." },
+  { target: "android", title: "Widgets and phone tracking", copy: "Use LogIt on Android to add home screen widgets or set up automations for app use, screen time goals, and Health Connect. You can also track sleep." },
 ];
 
 export function Introduction({ onDone }: { onDone: () => void }) {

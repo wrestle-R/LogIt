@@ -87,7 +87,7 @@ object OfflineLogQueue {
         }
     }
 
-    private fun persist(owner: String, ops: List<LogOp>, history: List<LogOp>) {
+    private fun persist(owner: String, ops: List<LogOp>, history: List<LogOp>, redo: List<LogOp> = redoHistory(owner)) {
         val pending = JSONArray(ops.map {
             JSONObject()
                 .put("id", it.id)
@@ -97,7 +97,7 @@ object OfflineLogQueue {
                 .put("automatic", it.automatic)
                 .put("reversesAutomatic", it.reversesAutomatic)
         })
-        val undo = JSONArray(history.map {
+        fun encodeHistory(logs: List<LogOp>) = JSONArray(logs.map {
             JSONObject()
                 .put("id", it.id)
                 .put("habit", it.habit)
@@ -107,7 +107,8 @@ object OfflineLogQueue {
         check(
             Store.prefs.edit()
                 .putString("pending_$owner", pending.toString())
-                .putString("undo_history_$owner", undo.toString())
+                .putString("undo_history_$owner", encodeHistory(history).toString())
+                .putString("redo_history_$owner", encodeHistory(redo).toString())
                 .remove("last_log_$owner")
                 .commit()
         ) { "Local storage unavailable" }
@@ -119,14 +120,20 @@ object OfflineLogQueue {
         val op = LogOp(UUID.randomUUID().toString(), owner, habit, day, delta, automatic = setOnce)
         val history = undoHistory(owner)
         val previous = history.lastOrNull()
+        val removeLatest = delta < 0 && previous?.habit == habit && previous.day == day
         persist(
             owner,
             operations(owner) + op,
             UndoHistory.record(
                 history,
                 added = op.takeIf { delta > 0 },
-                removeLatest = delta < 0 && previous?.habit == habit && previous.day == day,
+                removeLatest = removeLatest,
             ),
+            when {
+                delta > 0 -> emptyList()
+                removeLatest -> redoHistory(owner) + previous
+                else -> redoHistory(owner)
+            },
         )
         schedule()
     }
@@ -149,17 +156,23 @@ object OfflineLogQueue {
         val legacy = Store.prefs.getString("last_log_$owner", null)
         val a = if (stored != null) JSONArray(stored)
                 else if (legacy != null) JSONArray().put(JSONObject(legacy)) else JSONArray()
-        return (0 until a.length()).map { i ->
-            val o = a.getJSONObject(i)
-            LogOp(
-                o.getString("id"),
-                owner,
-                o.getString("habit"),
-                o.getString("day"),
-                1,
-                automatic = o.optBoolean("automatic"),
-            )
-        }
+        return decodeHistory(owner, a)
+    }
+
+    @Synchronized
+    fun redoHistory(owner: String): List<LogOp> =
+        decodeHistory(owner, JSONArray(Store.prefs.getString("redo_history_$owner", "[]") ?: "[]"))
+
+    private fun decodeHistory(owner: String, a: JSONArray) = (0 until a.length()).map { i ->
+        val o = a.getJSONObject(i)
+        LogOp(
+            o.getString("id"),
+            owner,
+            o.getString("habit"),
+            o.getString("day"),
+            1,
+            automatic = o.optBoolean("automatic"),
+        )
     }
 
     @Synchronized
@@ -172,17 +185,28 @@ object OfflineLogQueue {
         check(Store.habitsFor(owner).any { it.id == reversed.habit && it.count(reversed.day) > 0 }) {
             "That completion is no longer available"
         }
-        persist(owner, operations(owner) + reversed, history.dropLast(1))
+        persist(owner, operations(owner) + reversed, history.dropLast(1), redoHistory(owner) + history.last())
+        schedule()
+    }
+
+    @Synchronized
+    fun redo(owner: String, expectedId: String) {
+        val history = redoHistory(owner)
+        val op = UndoHistory.reapply(history, expectedId)
+        check(Store.habitsFor(owner).any { it.id == op.habit }) { "Activity no longer exists" }
+        persist(owner, operations(owner) + op, undoHistory(owner) + op, history.dropLast(1))
         schedule()
     }
 
     private fun discard(owner: String, shouldDiscard: (LogOp) -> Boolean) {
         val ops = operations(owner)
         val history = undoHistory(owner)
+        val redo = redoHistory(owner)
         val remainingOps = ops.filterNot(shouldDiscard)
         val remainingHistory = history.filterNot(shouldDiscard)
-        if (remainingOps.size != ops.size || remainingHistory.size != history.size) {
-            persist(owner, remainingOps, remainingHistory)
+        val remainingRedo = redo.filterNot(shouldDiscard)
+        if (remainingOps.size != ops.size || remainingHistory.size != history.size || remainingRedo.size != redo.size) {
+            persist(owner, remainingOps, remainingHistory, remainingRedo)
         }
     }
 
@@ -209,6 +233,7 @@ object OfflineLogQueue {
                     op.owner,
                     ops.filterNot { it.id == op.id },
                     if (result.skippedAutomatic) history.filterNot { it.id == op.id } else history,
+                    if (result.skippedAutomatic) redoHistory(op.owner).filterNot { it.id == op.id } else redoHistory(op.owner),
                 )
             }
         }

@@ -33,8 +33,11 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class PhoneTrackingActivity : ComponentActivity() {
     private val screen get() = intent.getStringExtra("trackingScreen") ?: "apps"
@@ -47,13 +50,17 @@ class PhoneTrackingActivity : ComponentActivity() {
     private var healthAccess: Set<String>? = null
     private var checkingHealth = false
     private var healthJob: Job? = null
+    private val refreshPage: () -> Unit = { runOnUiThread { if (!isDestroyed && !isFinishing) render() } }
     private val healthPermission = registerForActivityResult(PermissionController.createRequestPermissionResultContract()) {
         refreshHealth(force = true, announce = false)
     }
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        selectedDay = (state?.getString("day") ?: intent.getStringExtra("sleepDay"))?.let(LocalDate::parse)
+        val widgetOwner = intent.getStringExtra("widgetOwner")
+        if (widgetOwner == null || Store.trackingOwner() == widgetOwner) {
+            selectedDay = (state?.getString("day") ?: intent.getStringExtra("sleepDay"))?.let(LocalDate::parse)
+        }
         offerWidget = state?.getBoolean("offerWidget") == true
     }
 
@@ -65,7 +72,8 @@ class PhoneTrackingActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        PhoneTracking.updated = { if (!isFinishing && !isDestroyed) render() }
+        PhoneTracking.updated = refreshPage
+        Store.observers.add(refreshPage)
         PhoneTracking.schedule()
         healthScope.launch(Dispatchers.IO) { PhoneTracking.run(applicationContext, onReturn = true) }
         PhoneTracking.syncSleep()
@@ -81,6 +89,7 @@ class PhoneTrackingActivity : ComponentActivity() {
 
     override fun onPause() {
         PhoneTracking.updated = null
+        Store.observers.remove(refreshPage)
         healthJob?.cancel()
         super.onPause()
     }
@@ -208,79 +217,113 @@ class PhoneTrackingActivity : ComponentActivity() {
 
     private fun showHealth(root: LinearLayout, owner: String) {
         val status = HealthTracking.status(this)
-        root.addCard(card().apply {
-            addView(label("Log activities from steps, recorded workouts, or sleep when you open LogIt.", 14f, Theme.muted))
-            if (status == HealthConnectClient.SDK_AVAILABLE) {
-                addAction("Manage health access") { openHealthAccess() }
-            } else {
-                addView(label(if (status == HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED) {
-                    "Install or update Health Connect to continue."
-                } else "Health Connect is unavailable on this device.", 14f, Theme.muted))
-                if (status == HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED && Build.VERSION.SDK_INT < 34) {
-                    addAction("Health Connect in Google Play") {
-                        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
-                            "https://play.google.com/store/apps/details?id=${HealthTracking.providerPackage}",
-                        )))
-                    }
-                }
-            }
-        })
-        if (status != HealthConnectClient.SDK_AVAILABLE) return
-
-        val habits = Store.habits.associateBy { it.id }
-        val sleep = PhoneTracking.sleep(owner)?.takeIf { it.activityId in habits }
-        var connected = false
-        for (metric in HealthMetric.entries) {
-            val rule = HealthTracking.rule(owner, metric)?.takeIf { it.activityId in habits }
-            val allowed = metric.permission in healthAccess.orEmpty()
-            connected = connected || (rule != null && allowed)
+        if (status != HealthConnectClient.SDK_AVAILABLE) {
+            val update = status == HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED
             root.addCard(card().apply {
-                addView(title(metric.title))
-                val summary = when (metric) {
-                    HealthMetric.Steps -> "Log an activity when you reach a daily step target."
-                    HealthMetric.Sleep -> "Import bedtime and wake time into your Sleep activity."
-                    else -> "Log an activity when a recorded ${metric.title.lowercase(java.util.Locale.ROOT)} session meets your time target."
-                }
-                val habit = rule?.let { habits[it.activityId] }
-                val target = when (metric) {
-                    HealthMetric.Steps -> " · ${rule?.target} steps a day"
-                    HealthMetric.Sleep -> ""
-                    else -> " · ${rule?.target} minutes per session"
-                }
-                addView(label(if (habit == null) summary else habit.name + target, 14f, Theme.muted))
-
-                if (rule != null && !allowed && healthAccess != null) {
-                    val accessLabel = when (metric) {
-                        HealthMetric.Steps -> "Allow steps access"
-                        HealthMetric.Sleep -> "Allow sleep access"
-                        else -> "Allow workout access"
-                    }
-                    addAction(accessLabel, true) {
-                        runCatching { healthPermission.launch(setOf(metric.permission)) }
-                            .onFailure { toast("Couldn't open health permissions.") }
-                    }
-                } else if (rule != null && healthAccess == null && !checkingHealth) {
-                    addAction("Retry health access check") { refreshHealth() }
-                }
-                when {
-                    metric != HealthMetric.Sleep -> addAction(if (rule == null) "Set up ${metric.title.lowercase(java.util.Locale.ROOT)}" else "Edit rule") {
-                        healthRuleEditor(owner, metric, rule)
-                    }
-                    rule != null -> addAction("Stop importing sleep") {
-                        HealthTracking.saveRule(owner, metric, null)
-                        render()
-                    }
-                    sleep != null -> addAction("Import sleep") {
-                        HealthTracking.saveRule(owner, metric, HealthRule(sleep.activityId, 0, LocalDate.parse(Dates.today())))
-                        render()
-                        refreshHealth()
-                    }
-                    else -> addAction("Set up Sleep activity") { openTracking("sleep") }
+                addView(label(if (update) "Install or update Health Connect to continue."
+                    else "Health Connect is unavailable on this device.", 14f, Theme.muted))
+                if (update && Build.VERSION.SDK_INT < 34) addAction("Open Google Play") {
+                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
+                        "https://play.google.com/store/apps/details?id=${HealthTracking.providerPackage}",
+                    )))
                 }
             })
+            return
         }
-        if (connected) root.addAction("Check health data now") { refreshHealth(force = true) }
-        root.addView(label("LogIt syncs activity completions and sleep summaries to your account. Health records are read on this phone.", 12f, Theme.muted))
+
+        val habits = Store.habitsFor(owner).associateBy { it.id }
+        val sleep = PhoneTracking.sleep(owner)?.takeIf { it.activityId in habits }
+        val configured = HealthMetric.entries.associateWith { HealthTracking.rule(owner, it) }
+        root.addCard(card().apply {
+            HealthMetric.entries.forEachIndexed { index, metric ->
+                if (index > 0) addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)))
+                val rule = configured[metric]
+                val habit = habits[rule?.activityId]
+                val allowed = metric.permission in healthAccess.orEmpty()
+                val state = when {
+                    rule == null -> "Not set up"
+                    habit == null -> "Activity unavailable"
+                    checkingHealth -> "Checking access…"
+                    healthAccess == null -> "Couldn’t check access"
+                    !allowed -> "Access needed"
+                    else -> "On"
+                }
+                val target = when {
+                    rule == null -> null
+                    metric == HealthMetric.Sleep -> "Import bedtime and wake time"
+                    metric == HealthMetric.Steps -> "${rule.target} steps a day"
+                    else -> "${rule.target} min per session"
+                }
+                val details = listOfNotNull(habit?.name, target).joinToString(" · ")
+                addView(LinearLayout(this@PhoneTrackingActivity).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                    val summary = column().apply {
+                        background = null
+                        setPadding(0, dp(8), dp(8), dp(8))
+                        addView(title(metric.title))
+                        addView(label(state, 14f, if (state == "Access needed") Theme.destructive else Theme.muted))
+                        if (details.isNotEmpty()) addView(label(details, 14f, Theme.muted))
+                        if (state == "Access needed") {
+                            addView(action("Allow access") { requestHealthAccess(metric) }.apply {
+                                contentDescription = "Allow ${metric.title.lowercase(java.util.Locale.ROOT)} access"
+                                minimumHeight = dp(48)
+                            }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+                        }
+                    }
+                    addView(summary, LinearLayout.LayoutParams(0, -2, 1f))
+                    addView(action(if (rule == null) "Set up" else "Edit") {
+                        if (metric == HealthMetric.Sleep) healthSleepEditor(owner, sleep, rule)
+                        else healthRuleEditor(owner, metric, rule)
+                    }.apply {
+                        contentDescription = if (rule == null) "Set up ${metric.title}" else "Edit ${metric.title}"
+                        minimumHeight = dp(48)
+                    })
+                }, LinearLayout.LayoutParams(-1, -2))
+            }
+        })
+        root.addAction("Manage health access") { openHealthAccess() }
+        if (healthAccess == null && !checkingHealth) root.addAction("Retry access check") { refreshHealth() }
+        else if (configured.any { (metric, rule) -> rule != null &&
+                rule.activityId in habits && metric.permission in healthAccess.orEmpty() }) {
+            root.addAction("Check health data now") { refreshHealth(force = true) }
+        }
+        root.addView(label("LogIt reads health records on this phone and syncs activity logs and sleep summaries to your account.", 13f, Theme.muted),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+    }
+
+    private fun addHealthPermission(form: LinearLayout, metric: HealthMetric) {
+        if (metric.permission in healthAccess.orEmpty()) return
+        form.addAction("Allow ${metric.title.lowercase(java.util.Locale.ROOT)} access") {
+            requestHealthAccess(metric)
+        }
+    }
+
+    private fun requestHealthAccess(metric: HealthMetric) {
+        runCatching { healthPermission.launch(setOf(metric.permission)) }
+            .onFailure { toast("Couldn’t open health permissions.") }
+    }
+
+    private fun healthSleepEditor(owner: String, sleep: SleepTracking?, rule: HealthRule?) {
+        val form = form()
+        val habit = Store.habitsFor(owner).find { it.id == sleep?.activityId }
+        form.addView(label(habit?.let { "Import bedtime and wake time into ${it.name}." }
+            ?: "Set up a Sleep activity before importing sleep records.", 15f, Theme.muted))
+        addHealthPermission(form, HealthMetric.Sleep)
+        showForm("Sleep import", form, when {
+            habit == null -> "Set up Sleep"
+            rule == null -> "Turn on import"
+            else -> "Done"
+        }, rule?.let {
+            { HealthTracking.saveRule(owner, HealthMetric.Sleep, null); render() }
+        }, removeLabel = "Turn off import") { dialog ->
+            dialog.dismiss()
+            if (habit == null) openTracking("sleep")
+            else if (rule == null) {
+                HealthTracking.saveRule(owner, HealthMetric.Sleep, HealthRule(habit.id, 0, LocalDate.parse(Dates.today())))
+                render()
+                refreshHealth()
+            }
+        }
     }
 
     private fun openHealthAccess() {
@@ -300,6 +343,7 @@ class PhoneTrackingActivity : ComponentActivity() {
         val target = form.field(if (metric == HealthMetric.Steps) "Steps per day" else "Minutes per session",
             (existing?.target ?: metric.defaultTarget).toString(), number = true, maxLength = 6)
         val error = form.error()
+        addHealthPermission(form, metric)
         showForm("${metric.title} rule", form, "Save rule", existing?.let {
             { HealthTracking.saveRule(owner, metric, null); render() }
         }) { dialog ->
@@ -344,6 +388,13 @@ class PhoneTrackingActivity : ComponentActivity() {
 
     private fun LinearLayout.addAction(text: String, primary: Boolean = false, onClick: () -> Unit) =
         addView(action(text, primary, onClick), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+
+    private fun pickerButton(text: String, onClick: () -> Unit) = action(text, onClick = onClick).apply {
+        gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        val chevron = getDrawable(R.drawable.ic_chevron_down)!!.mutate().apply { setTint(Theme.muted) }
+        setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, chevron, null)
+        compoundDrawablePadding = dp(8)
+    }
 
     private fun permissionCard(owner: String) = card().apply {
         val automatic = PhoneTracking.automaticEnabled(owner)
@@ -672,9 +723,9 @@ class PhoneTrackingActivity : ComponentActivity() {
         })
         val habits = Store.habits.associateBy { it.id }
         for (rule in rules) {
-            val habit = habits[rule.activityId] ?: continue
+            val habit = habits[rule.activityId]
             root.addCard(card().apply {
-                addView(title(habit.name))
+                addView(title(habit?.name ?: "Activity unavailable"))
                 addView(label("${rule.app.label} · ${rule.triggerLabel}", 14f, Theme.muted))
                 addAction("Edit rule") { appRuleEditor(owner, rule, null) }
             })
@@ -687,12 +738,12 @@ class PhoneTrackingActivity : ComponentActivity() {
         var selectedApp = rule?.app
         form.addView(label("App to track", 13f, Theme.muted))
         lateinit var appButton: android.widget.Button
-        appButton = action(selectedApp?.label ?: "Choose an app") {
+        appButton = pickerButton(selectedApp?.label ?: "Choose an app") {
             pickApps(selectedApp?.let(::listOf).orEmpty(), multi = false) {
                 selectedApp = it.firstOrNull()
                 appButton.text = selectedApp?.label ?: "Choose an app"
             }
-        }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }
+        }
         form.addView(appButton, LinearLayout.LayoutParams(-1, -2))
         val presetMinutes = listOf(0, 1, 5, 10, 15, 30, 60)
         val currentMinutes = rule?.minutes ?: 5
@@ -703,12 +754,24 @@ class PhoneTrackingActivity : ComponentActivity() {
                 60 -> "1 hour"
                 else -> "$minutes min"
             }
-        } + "Custom minutes").toTypedArray(), presetMinutes.indexOf(currentMinutes).takeIf { it >= 0 } ?: presetMinutes.size)
+        } + "Custom minutes").toTypedArray(), presetMinutes.indexOf(currentMinutes).takeIf { it >= 0 } ?: presetMinutes.size, pickerTitle = "When to log")
         form.addView(trigger, LinearLayout.LayoutParams(-1, dp(48)))
         val custom = form().apply { visibility = if (currentMinutes in presetMinutes) View.GONE else View.VISIBLE }
         val minimum = custom.field("Minimum minutes per day", currentMinutes.coerceAtLeast(1).toString(), number = true)
         form.addView(custom)
-        trigger.onChange = { custom.visibility = if (trigger.selectedItemPosition == presetMinutes.size) View.VISIBLE else View.GONE }
+        val triggerHelp = label("", 13f, Theme.muted).apply { setPadding(0, dp(6), 0, 0) }
+        form.addView(triggerHelp)
+        fun describeTrigger() {
+            val minutes = presetMinutes.getOrNull(trigger.selectedItemPosition)
+            custom.visibility = if (minutes == null) View.VISIBLE else View.GONE
+            triggerHelp.text = when (minutes) {
+                null -> "Log once per day when total app use reaches the time you enter."
+                0 -> "Log the first time you open this app each day."
+                else -> "Log once per day after using this app for $minutes ${if (minutes == 1) "minute" else "minutes"} in total."
+            }
+        }
+        trigger.onChange = ::describeTrigger
+        describeTrigger()
         val error = form.error()
         showForm("App rule", form, "Save rule", rule?.let {
             { PhoneTracking.saveAppRules(owner, PhoneTracking.appRules(owner).filterNot { current -> current == rule }); render() }
@@ -735,23 +798,29 @@ class PhoneTrackingActivity : ComponentActivity() {
         val total = limits.firstOrNull { it.id == ScreenLimit.totalId }
         root.addCard(card().apply {
             addView(title("Daily limits"))
-            addView(label("Get a notice at the limit. Link an activity to log completed days below the limit.", 14f, Theme.muted))
+            addView(label("An app group tracks time across selected apps. You can link a LogIt activity to record days you stay under its limit.", 14f, Theme.muted))
             if (total == null) {
                 if (AndroidUsage.screenEventsSupported) addAction("Set total phone limit") { limitEditor(owner, null, total = true) }
                 else addView(label("Total phone time requires Android 9 or later.", 13f, Theme.muted))
             }
             addAction("Add app group", true) { limitEditor(owner, null, total = false) }
         })
+        val activities = Store.habitsFor(owner).associateBy { it.id }
         for (limit in limits) {
+            val linked = activities[limit.activityId]
             val reading = PhoneTracking.reading(owner, limit.id)?.takeIf {
-                it.day == Dates.today() && PhoneTracking.automaticEnabled(owner) && AndroidUsage.allowed(this)
+                it.day == Dates.today() && limit.enabled && PhoneTracking.automaticEnabled(owner) && AndroidUsage.allowed(this)
             }
             val yesterday = PhoneTracking.reading(owner, limit.id, yesterday = true)?.takeIf {
                 it.day == LocalDate.parse(Dates.today()).minusDays(1).toString() &&
-                    PhoneTracking.automaticEnabled(owner) && AndroidUsage.allowed(this)
+                    limit.enabled && PhoneTracking.automaticEnabled(owner) && AndroidUsage.allowed(this)
             }
             root.addCard(card().apply {
                 addView(title(limit.name))
+                val kind = if (limit.id == ScreenLimit.totalId) "Phone limit"
+                    else "${limit.apps.size} app${if (limit.apps.size == 1) "" else "s"}"
+                addView(label(if (limit.enabled) kind else "$kind · Paused", 14f, Theme.muted))
+                addView(label(linked?.let { "Logs ${it.name}" } ?: "No activity linked", 14f, Theme.muted))
                 val limitText = formatUsageMinutes(limit.minutes)
                 addView(label(if (reading == null) "Daily limit $limitText" else
                     "${formatUsageMinutes(reading.minutes)} used today · $limitText limit", 14f, Theme.muted))
@@ -767,29 +836,31 @@ class PhoneTrackingActivity : ComponentActivity() {
                     val result = if (yesterday.minutes < limit.minutes) "under limit" else "limit reached"
                     addView(label("Yesterday · ${formatUsageMinutes(yesterday.minutes)} · $result", 13f, Theme.muted))
                 }
-                addAction("Edit limit") { limitEditor(owner, limit, total = limit.id == ScreenLimit.totalId) }
+                addAction(if (linked == null) "Edit or link activity" else "Edit limit") {
+                    limitEditor(owner, limit, total = limit.id == ScreenLimit.totalId)
+                }
             })
         }
-        root.addView(label("Daily totals follow India time.", 12f, Theme.muted))
+        root.addView(label("Daily limits reset at midnight on this phone.", 12f, Theme.muted))
     }
 
     private fun limitEditor(owner: String, existing: ScreenLimit?, total: Boolean) {
         val form = form()
         val name = if (total) null else form.field("Group name", existing?.name.orEmpty())
         val nameError = name?.let { form.error() }
-        val available = AndroidUsage.launchableApps(this).associateBy { it.id }
+        val available = AndroidUsage.cachedApps().orEmpty().associateBy { it.id }
         var apps = existing?.apps.orEmpty().map { available[it] ?: UsageApp(it, "Unavailable app") }
         var appsError: android.widget.TextView? = null
         if (!total) {
             form.addView(label("Apps in group", 13f, Theme.muted))
             lateinit var choose: android.widget.Button
-            choose = action(if (apps.isEmpty()) "Choose apps" else "${apps.size} apps selected") {
+            choose = pickerButton(if (apps.isEmpty()) "Choose apps" else "${apps.size} apps selected") {
                 pickApps(apps, multi = true) {
                     apps = it
                     choose.text = if (it.isEmpty()) "Choose apps" else "${it.size} apps selected"
                     if (it.isNotEmpty()) appsError?.text = ""
                 }
-            }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }
+            }
             form.addView(choose, LinearLayout.LayoutParams(-1, -2))
             appsError = form.error()
         }
@@ -798,9 +869,25 @@ class PhoneTrackingActivity : ComponentActivity() {
         name?.doAfterTextChanged { nameError?.text = "" }
         maximum.doAfterTextChanged { minutesError.text = "" }
         val target = activityChoice(form, owner, existing?.activityId, optional = true)
+        val enabled = android.widget.CheckBox(this).apply {
+            text = "Limit enabled"
+            textSize = 15f
+            setTextColor(Theme.text)
+            buttonTintList = android.content.res.ColorStateList.valueOf(Theme.text)
+            minimumHeight = dp(48)
+            isChecked = existing?.enabled ?: true
+        }
+        form.addView(enabled)
         showForm(if (total) "Total phone limit" else "App group limit", form, "Save limit", existing?.let {
-            { PhoneTracking.saveLimits(owner, PhoneTracking.limits(owner).filterNot { current -> current.id == existing.id }); render() }
-        }) { dialog ->
+            {
+                PrettyDialog.Builder(this).setTitle("Delete ${existing.name}?")
+                    .setMessage("This removes the limit. The linked activity and its log history stay in LogIt.")
+                    .setNegativeButton("Cancel", null).setPositiveButton("Delete limit") { _, _ ->
+                        PhoneTracking.saveLimits(owner, PhoneTracking.limits(owner).filterNot { it.id == existing.id })
+                        render()
+                    }.show()
+            }
+        }, removeLabel = "Delete limit") { dialog ->
             val count = maximum.text.toString().toIntOrNull()
             val title = if (total) "Total phone use" else name?.text.toString().trim()
             val missingApps = !total && apps.isEmpty()
@@ -810,8 +897,18 @@ class PhoneTrackingActivity : ComponentActivity() {
             minutesError.text = if (validMinutes) "" else "Enter 1 to 1,440 minutes."
             if (title.isBlank() || missingApps || count == null || !validMinutes) return@showForm
             val id = existing?.id ?: if (total) ScreenLimit.totalId else ScreenLimit.newId()
-            val next = ScreenLimit(id, title, apps.mapTo(mutableSetOf()) { it.id }, count, target()?.id, System.currentTimeMillis())
-            PhoneTracking.saveLimits(owner, PhoneTracking.limits(owner).filterNot { it.id == id } + next)
+            if (Store.trackingOwner() != owner) return@showForm
+            val previous = PhoneTracking.limits(owner)
+            val current = previous.find { it.id == id }
+            if (existing != current) {
+                minutesError.text = "This limit changed. Close this editor and open it again."
+                return@showForm
+            }
+            val next = ScreenLimit(id, title, apps.mapTo(mutableSetOf()) { it.id }, count, target()?.id,
+                existing?.since ?: System.currentTimeMillis(), enabled.isChecked)
+            val saved = if (next != existing?.copy(name = next.name)) next.copy(since = System.currentTimeMillis()) else next
+            PhoneTracking.saveLimits(owner, if (existing == null) previous + saved
+                else previous.map { if (it.id == id) saved else it })
             dialog.dismiss()
             render()
         }
@@ -827,17 +924,17 @@ class PhoneTrackingActivity : ComponentActivity() {
             if (habits.isEmpty()) return
             val options = listOf<Habit?>(null) + habits
             choices.addView(label(if (optional) "Activity to log when under limit" else "Activity to log", 13f, Theme.muted))
-            val choice = ChoiceView(this, options.map { it?.name ?: if (optional) "None" else "Choose an activity" }.toTypedArray(),
+            val choice = ChoiceView(this, options.map { it?.name ?: if (optional) "No activity linked" else "Choose an activity" }.toTypedArray(),
                 options.indexOfFirst { it?.id == selectedId }.coerceAtLeast(0),
                 options.map { it?.let { habit -> Theme.colors[habit.color.coerceIn(0, Theme.colors.lastIndex)] } ?: 0 }
-                    .toIntArray()).apply {
+                    .toIntArray(), "Choose an activity").apply {
                 background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
             }
             choices.addView(choice, LinearLayout.LayoutParams(-1, dp(48)))
             choice.onChange = { selectedId = options[choice.selectedItemPosition]?.id }
         }
         populate()
-        form.addView(quietAction("+ Create activity") {
+        form.addView(action("+ Create activity") {
             if (Store.trackingOwner() == owner) {
                 editActivity(initialName = intent.getStringExtra("activityName").orEmpty()) { createdId ->
                     selectedId = createdId
@@ -848,15 +945,19 @@ class PhoneTrackingActivity : ComponentActivity() {
         }.apply {
             setTextColor(Theme.text)
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            setPadding(dp(4), 0, dp(4), 0)
             minHeight = dp(44)
             minimumHeight = dp(44)
-        }, LinearLayout.LayoutParams(-1, -2))
+        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6); bottomMargin = dp(6) })
         return { Store.habitsFor(owner).find { it.id == selectedId } }
     }
 
     private fun pickApps(selected: List<UsageApp>, multi: Boolean, onDone: (List<UsageApp>) -> Unit) {
-        val apps = (AndroidUsage.launchableApps(this) + selected).distinctBy(UsageApp::id)
+        val pickerScope = kotlinx.coroutines.CoroutineScope(
+            healthScope.coroutineContext + SupervisorJob(healthScope.coroutineContext[Job]),
+        )
+        var apps = selected
+        var loading = true
+        var failed = false
         val chosen = selected.associateByTo(linkedMapOf()) { it.id }
         val form = form().apply { isFocusableInTouchMode = true }
         val search = form.field("Search installed apps", "", showLabel = false).apply {
@@ -865,12 +966,14 @@ class PhoneTrackingActivity : ComponentActivity() {
         }
         val status = label("", 12f, Theme.muted).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         form.addView(status)
+        val retry = action("Retry") { }.apply { visibility = View.GONE }
+        form.addView(retry)
         val list = object : ListView(this) {
             override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
                 val cap = minOf(dp(360), resources.displayMetrics.heightPixels / 2)
                 val size = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) cap
                     else minOf(cap, MeasureSpec.getSize(heightMeasureSpec))
-                super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(size, MeasureSpec.AT_MOST))
+                super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(size, MeasureSpec.EXACTLY))
             }
         }.apply {
             divider = null
@@ -878,9 +981,8 @@ class PhoneTrackingActivity : ComponentActivity() {
         }
         form.addView(list, LinearLayout.LayoutParams(-1, -2, 1f))
         lateinit var dialog: PrettyDialog
-        val repeatedLabels = apps.groupingBy { it.label }.eachCount().filterValues { it > 1 }.keys
+        var repeatedLabels = emptySet<String>()
         var matches = apps
-        val icons = mutableMapOf<String, android.graphics.drawable.Drawable.ConstantState?>()
         val adapter = object : BaseAdapter() {
             override fun getCount() = matches.size
             override fun getItem(position: Int) = matches[position]
@@ -898,11 +1000,14 @@ class PhoneTrackingActivity : ComponentActivity() {
                 }
                 val app = getItem(position)
                 val checked = app.id in chosen
-                val icon = icons.getOrPut(app.id) {
-                    runCatching { packageManager.getApplicationIcon(app.id).constantState }.getOrNull()
-                }
-                (row.getChildAt(0) as ImageView).setImageDrawable(icon?.newDrawable(resources)
-                    ?: packageManager.defaultActivityIcon)
+                val image = row.getChildAt(0) as ImageView
+                (image.tag as? Job)?.cancel()
+                val cached = AndroidUsage.cachedIcon(app)
+                image.setImageDrawable(cached?.newDrawable(resources))
+                image.tag = if (cached == null) pickerScope.launch {
+                    val icon = withContext(Dispatchers.IO) { AndroidUsage.loadIcon(applicationContext, app) }
+                    image.setImageDrawable(icon?.newDrawable(resources))
+                } else null
                 val name = if (app.label in repeatedLabels) "${app.label}\n${app.id}" else app.label
                 (row.getChildAt(1) as android.widget.TextView).text = name
                 row.getChildAt(2).visibility = if (checked) View.VISIBLE else View.GONE
@@ -914,6 +1019,8 @@ class PhoneTrackingActivity : ComponentActivity() {
         }
         fun updateStatus() {
             status.text = when {
+                failed -> "Couldn’t load installed apps."
+                loading -> "Loading installed apps…"
                 matches.isEmpty() -> "No apps found"
                 multi -> "${chosen.size} selected"
                 else -> "Select one app"
@@ -931,29 +1038,61 @@ class PhoneTrackingActivity : ComponentActivity() {
                 updateStatus()
             }
         }
-        search.doAfterTextChanged {
-            val query = it.toString().trim()
-            matches = apps.filter { app -> app.label.contains(query, true) || app.id.contains(query, true) }
+        fun filterApps() {
+            val query = search.text.toString().trim()
+            matches = if (query.isEmpty()) apps else apps.filter { app ->
+                app.label.contains(query, true) || app.id.contains(query, true)
+            }
             adapter.notifyDataSetChanged()
             list.setSelection(0)
             updateStatus()
         }
+        fun loadApps() {
+            loading = true
+            failed = false
+            retry.visibility = View.GONE
+            updateStatus()
+            pickerScope.launch {
+                try {
+                    val catalog = AndroidUsage.cachedApps() ?: withContext(Dispatchers.IO) {
+                        AndroidUsage.launchableApps(applicationContext)
+                    }
+                    apps = (catalog + selected).distinctBy(UsageApp::id)
+                    repeatedLabels = apps.groupingBy { it.label }.eachCount().filterValues { it > 1 }.keys
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    failed = true
+                    retry.visibility = View.VISIBLE
+                } finally {
+                    loading = false
+                }
+                filterApps()
+            }
+        }
+        search.doAfterTextChanged { filterApps() }
+        retry.setOnClickListener { loadApps() }
         updateStatus()
         val builder = PrettyDialog.Builder(this).setTitle(if (multi) "Choose apps" else "Choose an app")
             .setCompact().setView(form, scroll = false).setNegativeButton("Cancel", null)
         if (multi) builder.setPositiveButton("Done") { _, _ -> onDone(chosen.values.toList()) }
         dialog = builder.create()
+        dialog.setOnDismissListener { pickerScope.cancel() }
         form.requestFocus()
         dialog.show()
+        loadApps()
     }
 
     private fun showForm(title: String, form: LinearLayout, save: String, remove: (() -> Unit)? = null,
-        onSave: (PrettyDialog) -> Unit) {
+        removeLabel: String = "Remove rule", onSave: (PrettyDialog) -> Unit) {
         lateinit var dialog: PrettyDialog
-        if (remove != null) form.addAction("Remove") {
+        if (remove != null) form.addView(action(removeLabel) {
             dialog.dismiss()
             remove()
-        }
+        }.apply {
+            setTextColor(Theme.destructive)
+            minimumHeight = dp(48)
+        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(10) })
         dialog = PrettyDialog.Builder(this).setTitle(title).setCompact().setView(form)
             .setNegativeButton("Cancel", null).setPositiveButton(save, null).create()
         dialog.setOnShowListener { dialog.getButton(-1).setOnClickListener { onSave(dialog) } }

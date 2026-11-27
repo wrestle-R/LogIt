@@ -14,6 +14,7 @@ import androidx.health.connect.client.time.TimeRangeFilter
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -46,13 +47,14 @@ internal fun selectHealthSleep(
     day: LocalDate,
     now: Instant,
     schedule: SleepSchedule,
+    zone: ZoneId = Dates.zone,
 ): SleepSummary? {
     val bedtimeDay = if (schedule.bedtime >= schedule.wakeTime) day.minusDays(1) else day
-    val usualBedtime = bedtimeDay.atTime(schedule.bedtime).atZone(Dates.zone).toInstant().toEpochMilli()
-    val usualWake = day.atTime(schedule.wakeTime).atZone(Dates.zone).toInstant().toEpochMilli()
+    val usualBedtime = bedtimeDay.atTime(schedule.bedtime).atZone(zone).toInstant().toEpochMilli()
+    val usualWake = day.atTime(schedule.wakeTime).atZone(zone).toInstant().toEpochMilli()
     return sessions.asSequence().filter { summary ->
         summary.bedtime < summary.wakeTime && summary.wakeTime <= now.toEpochMilli() &&
-            Instant.ofEpochMilli(summary.wakeTime).atZone(Dates.zone).toLocalDate() == day
+            Instant.ofEpochMilli(summary.wakeTime).atZone(zone).toLocalDate() == day
     }.maxWithOrNull(compareBy(
         { (minOf(it.wakeTime, usualWake) - maxOf(it.bedtime, usualBedtime)).coerceAtLeast(0) },
         { it.wakeTime - it.bedtime },
@@ -64,11 +66,13 @@ internal object HealthTracking {
     const val providerPackage = "com.google.android.apps.healthdata"
     private val syncLock = Mutex()
     private var lastCheck: RecentCheck? = null
+    @Volatile private var lastGrants: Set<String>? = null
 
     private data class RecentCheck(
         val owner: String,
         val rules: Map<HealthMetric, HealthRule>,
         val day: LocalDate,
+        val zone: ZoneId,
         val at: Long,
         val result: HealthCheck,
     )
@@ -107,6 +111,18 @@ internal object HealthTracking {
         if (status(context) == HealthConnectClient.SDK_AVAILABLE) {
             HealthConnectClient.getOrCreate(context).permissionController.getGrantedPermissions()
         } else emptySet()
+    }.also { rememberGrants(context, it) }
+
+    private fun rememberGrants(context: Context, grants: Set<String>?) {
+        if (grants == null || grants == lastGrants) return
+        lastGrants = grants
+        Widgets.refresh(context)
+    }
+
+    fun activitiesNeedingAccess(owner: String): Set<String> {
+        val grants = lastGrants ?: return emptySet()
+        return HealthMetric.entries.filterNot { it.permission in grants }
+            .mapNotNullTo(mutableSetOf()) { rule(owner, it)?.activityId }
     }
 
     private fun rules(owner: String, sleep: SleepTracking?): Map<HealthMetric, HealthRule> {
@@ -126,42 +142,47 @@ internal object HealthTracking {
         val rules = rules(owner, sleep)
         if (rules.isEmpty()) return@withLock HealthCheck.NO_RULES
         val now = Instant.now()
-        val today = now.atZone(Dates.zone).toLocalDate()
+        val zone = Dates.zone
+        val today = now.atZone(zone).toLocalDate()
         val timestamp = SystemClock.elapsedRealtime()
         val recent = lastCheck
-        if (!force && recent != null && recent.owner == owner && recent.rules == rules && recent.day == today &&
+        if (!force && recent != null && recent.owner == owner && recent.rules == rules && recent.day == today && recent.zone == zone &&
             timestamp - recent.at < 30_000L
         ) return@withLock recent.result
 
-        val result = readAndLog(context, owner, rules, sleep, now, today)
-        lastCheck = RecentCheck(owner, rules, today, timestamp, result)
+        val result = readAndLog(context, owner, rules, sleep, now, today, zone)
+        lastCheck = RecentCheck(owner, rules, today, zone, timestamp, result)
         result
     }
 
     private suspend fun readAndLog(
         context: Context, owner: String, rules: Map<HealthMetric, HealthRule>, sleep: SleepTracking?,
-        now: Instant, today: LocalDate,
+        now: Instant, today: LocalDate, zone: ZoneId,
     ): HealthCheck {
         if (status(context) != HealthConnectClient.SDK_AVAILABLE) return HealthCheck.UNAVAILABLE
         val client = readOrNull { HealthConnectClient.getOrCreate(context) } ?: return HealthCheck.FAILED
         val grants = readOrNull { client.permissionController.getGrantedPermissions() } ?: return HealthCheck.FAILED
+        rememberGrants(context, grants)
         val eligible = rules.filterKeys { it.permission in grants }
         if (eligible.isEmpty()) return HealthCheck.NEEDS_ACCESS
         val days = listOf(today.minusDays(1), today)
-        val range = TimeRangeFilter.between(startOf(days.first().minusDays(1)), now)
+        val since = Dates.automaticSince(owner, "health", zone, now)
+        if (since >= now) return HealthCheck.CHECKED
+        val range = TimeRangeFilter.between(maxOf(Dates.startOfDay(today.minusDays(2), zone), since), now)
         val exercises = if (eligible.keys.any { it == HealthMetric.Walking || it == HealthMetric.Running }) {
             readOrNull { readAll<ExerciseSessionRecord>(client, range) }
         } else emptyList()
         val sessions = if (HealthMetric.Sleep in eligible) {
-            readOrNull { readAll<SleepSessionRecord>(client, range) }?.map {
+            readOrNull { readAll<SleepSessionRecord>(client, range) }?.filter { it.startTime >= since }?.map {
                 SleepSummary(it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), healthConnect = true)
             }
         } else emptyList()
         var failed = exercises == null || sessions == null
         for ((metric, rule) in eligible) {
             for (day in days.filter { it >= rule.since }) {
-                val start = startOf(day)
-                val stop = minOf(startOf(day.plusDays(1)), now)
+                if (Dates.zone != zone) return HealthCheck.CHECKED
+                val start = maxOf(Dates.startOfDay(day, zone), since)
+                val stop = minOf(Dates.startOfDay(day.plusDays(1), zone), now)
                 if (start >= stop) continue
                 val met = when (metric) {
                     HealthMetric.Steps -> {
@@ -174,14 +195,14 @@ internal object HealthTracking {
                             workoutMeetsTarget(it.startTime, it.endTime, start, stop, rule.target)
                     }
                     HealthMetric.Sleep -> {
-                        val imported = sleep?.let { selectHealthSleep(sessions.orEmpty(), day, now, it.schedule) }
+                        val imported = sleep?.let { selectHealthSleep(sessions.orEmpty(), day, now, it.schedule, zone) }
                         if (imported != null && currentActivity(owner, metric, rule) != null && PhoneTracking.sleep(owner) == sleep) {
                             PhoneTracking.saveSummary(owner, rule.activityId, day.toString(), imported)
                         }
                         false
                     }
                 }
-                if (met) {
+                if (met && Dates.zone == zone) {
                     val habit = currentActivity(owner, metric, rule) ?: continue
                     val date = day.toString()
                     if (OfflineLogQueue.automaticOp(owner, habit, date).id !in habit.appliedOps) {
@@ -197,8 +218,6 @@ internal object HealthTracking {
         if (Store.trackingOwner() != owner || rule(owner, metric) != rule) return null
         return Store.habits.find { it.id == rule.activityId }
     }
-
-    private fun startOf(day: LocalDate) = day.atStartOfDay(Dates.zone).toInstant()
 
     private suspend fun steps(client: HealthConnectClient, start: Instant, stop: Instant): Long {
         val result = client.aggregate(AggregateRequest(setOf(StepsRecord.COUNT_TOTAL), TimeRangeFilter.between(start, stop)))

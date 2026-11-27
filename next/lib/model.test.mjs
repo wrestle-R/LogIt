@@ -21,9 +21,7 @@ test("counts survive a legacy array overwrite", () => {
   assert.equal(total(h), 4);
   assert.equal(streak(h, "2026-11-14"), 2);
 });
-test("IST boundary and duplicate legacy dates", () => {
-  assert.equal(dayKey(new Date("2026-11-13T18:29:59Z")), "2026-11-13");
-  assert.equal(dayKey(new Date("2026-11-13T18:30:00Z")), "2026-11-14");
+test("legacy dates stay unique", () => {
   assert.equal(total({ completions: ["2026-11-14", "2026-11-14"] }), 1);
 });
 
@@ -54,4 +52,11 @@ test("reminders skip goals that are met, not started, or still have days left", 
 test("new activities take an unused colour, then a least-used colour", () => {
   assert.equal(leastUsedColour([0, 1, 3, 3], 4), 2);
   assert.equal(leastUsedColour([0, 0, 1, 2, 2, 3], 4), 1);
+});
+
+test("day keys follow the local calendar and can be evaluated in a subscriber's zone", () => {
+  const instant = new Date("2026-11-25T02:35:00Z");
+  assert.equal(dayKey(instant, "America/Los_Angeles"), "2026-11-24");
+  assert.equal(dayKey(instant, "Asia/Tokyo"), "2026-11-25");
+  assert.equal(dayKey(new Date(2026, 10, 24, 23, 30)), "2026-11-24");
 });
