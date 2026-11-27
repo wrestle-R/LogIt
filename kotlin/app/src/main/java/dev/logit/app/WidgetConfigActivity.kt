@@ -16,7 +16,8 @@ import org.json.JSONObject
 
 class WidgetConfigActivity : Activity() {
     private var id = AppWidgetManager.INVALID_APPWIDGET_ID
-    private var pinKind: String? = null
+    private var kind = "log"
+    private var creating = false
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -26,28 +27,28 @@ class WidgetConfigActivity : Activity() {
                 AppWidgetManager.EXTRA_APPWIDGET_ID,
                 AppWidgetManager.INVALID_APPWIDGET_ID,
             )
-        pinKind = intent.getStringExtra("pinKind")
-        if (pinKind !in listOf("quick", "graph", "log")) pinKind = null
-        if (
-            pinKind == null &&
-                (id == AppWidgetManager.INVALID_APPWIDGET_ID ||
-                    AppWidgetManager.getInstance(this)
-                        .getAppWidgetInfo(id)
-                        ?.provider
-                        ?.packageName != packageName)
-        ) {
+        val manager = AppWidgetManager.getInstance(this)
+        val provider = manager.getAppWidgetInfo(id)?.provider
+        val pinKind = intent.getStringExtra("pinKind")?.takeIf { it in listOf("quick", "graph", "log") }
+        if (id != AppWidgetManager.INVALID_APPWIDGET_ID && provider?.packageName == packageName) {
+            kind = when (provider.shortClassName.substringAfterLast(".")) {
+                "QuickWidget" -> "quick"
+                "GraphWidget" -> "graph"
+                "LogGraphWidget" -> "log"
+                else -> { finish(); return }
+            }
+        } else if (id == AppWidgetManager.INVALID_APPWIDGET_ID && pinKind != null) {
+            creating = true
+            kind = pinKind
+        } else {
             finish()
             return
-        }
-        if (pinKind == null) pinKind = when (AppWidgetManager.getInstance(this).getAppWidgetInfo(id)?.provider?.shortClassName?.substringAfterLast(".")) {
-            "QuickWidget" -> "quick"
-            "GraphWidget" -> "graph"
-            else -> "log"
         }
         render()
     }
 
     private fun render() {
+        val page = column().apply { setBackgroundColor(Theme.bg) }
         val root = column()
         root.setPadding(dp(18), dp(8), dp(18), dp(24))
         window.statusBarColor = Theme.bg
@@ -62,7 +63,7 @@ class WidgetConfigActivity : Activity() {
                 setBackgroundColor(Theme.bg)
                 isFillViewport = true
             }
-        sc.setOnApplyWindowInsetsListener { view, insets ->
+        page.setOnApplyWindowInsetsListener { view, insets ->
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
                 view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
@@ -73,7 +74,8 @@ class WidgetConfigActivity : Activity() {
             insets
         }
         sc.addView(root)
-        setContentView(sc)
+        page.addView(sc, LinearLayout.LayoutParams(-1, 0, 1f))
+        setContentView(page)
 
         root.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
@@ -86,12 +88,12 @@ class WidgetConfigActivity : Activity() {
                 gravity = Gravity.CENTER
                 setPadding(0, 0, 0, 0)
             }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(12) })
-            addView(label("Widget setup", 22f).apply {
+            addView(label(if (creating) "Widget setup" else "Edit widget", 22f).apply {
                 typeface = Theme.semibold
                 setPadding(0, 0, 0, 0)
             }, LinearLayout.LayoutParams(0, -2, 1f))
         })
-        root.addView(label("Choose your activities and make it yours.", 14f, Theme.muted))
+        root.addView(label("Choose activities to display. Resize the widget to see more.", 14f, Theme.muted))
         if (!Store.ready || Store.habits.isEmpty()) {
             root.addView(label("Open LogIt, sign in and add an activity first."))
             root.addView(
@@ -102,16 +104,16 @@ class WidgetConfigActivity : Activity() {
             )
             return
         }
-        val old = JSONObject(Store.prefs.getString("widget_$id", "{}") ?: "{}")
+        val old = Widgets.config(id)
         val existing = old.optJSONArray("ids")
-        val selected = mutableSetOf<String>()
-        if (existing != null)
-            (0 until existing.length()).forEach { selected.add(existing.getString(it)) }
+        val selected = Widgets.selectedIds(old).toSet()
         val boxes = mutableListOf<CheckBox>()
         var updatePreview: () -> Unit = {}
         val activityList = column().apply { setPadding(0, dp(6), 0, dp(6)) }
         root.addView(activityList)
-        Store.habits.forEachIndexed { index, h ->
+        val habits = Store.habits
+        val automated = Store.trackingOwner()?.let(PhoneTracking::automatedActivities).orEmpty()
+        habits.forEachIndexed { index, h ->
             val check =
                 CheckBox(this).apply {
                     text = h.name
@@ -121,19 +123,8 @@ class WidgetConfigActivity : Activity() {
                     minHeight = dp(48)
                     setPadding(dp(12), dp(4), dp(12), dp(4))
                     background = Theme.bordered(Theme.card, Theme.cardBorder, dp(12).toFloat(), dp(1))
-                    isChecked = if (existing == null) index == 0 else selected.contains(h.id)
-                    setOnCheckedChangeListener { b, checked ->
-                        if (checked && boxes.count { it.isChecked } > 4) {
-                            b.isChecked = false
-                            Toast.makeText(
-                                    this@WidgetConfigActivity,
-                                    "Choose up to four activities",
-                                    Toast.LENGTH_SHORT,
-                                )
-                                .show()
-                        }
-                        updatePreview()
-                    }
+                    isChecked = if (existing == null && selected.isEmpty()) index == 0 else h.id in selected
+                    setOnCheckedChangeListener { _, _ -> updatePreview() }
                 }
             boxes.add(check)
             activityList.addView(check, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
@@ -150,42 +141,12 @@ class WidgetConfigActivity : Activity() {
             )
             return choice
         }
-        val mode =
-            select(
-                "Display",
-                arrayOf("Selected activities", "App page"),
-                if (old.optInt("pageIndex", -1) >= 0) 1 else 0,
-            )
-        val pages =
-            select(
-                "Page",
-                Array(maxOf(1, (Store.habits.size + 3) / 4)) { "Page ${it+1}" },
-                old.optInt("pageIndex", 0).coerceIn(0, maxOf(0, (Store.habits.size - 1) / 4)),
-            )
-        val color = select("Colour", Theme.names, old.optInt("color", 0).coerceIn(0, 9), Theme.colors)
         val theme =
             select(
                 "Surface",
                 arrayOf("Dark", "Light"),
                 if (old.optString("theme") == "light") 1 else 0,
             )
-        lateinit var gradientSwitch: ThemedSwitch
-        val gradientRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(50)
-            setPadding(dp(14), dp(4), dp(10), dp(4))
-            background = Theme.bordered(Theme.card, Theme.cardBorder, dp(12).toFloat(), dp(1))
-            addView(label("Preset gradient", 15f, Theme.text).apply {
-                setPadding(0, 0, 0, 0)
-            }, LinearLayout.LayoutParams(0, -2, 1f))
-            gradientSwitch = ThemedSwitch(this@WidgetConfigActivity, old.optBoolean("gradient"), "Preset gradient") {
-                updatePreview()
-            }
-            addView(gradientSwitch, LinearLayout.LayoutParams(dp(52), dp(44)))
-            setOnClickListener { gradientSwitch.performClick() }
-        }
-        root.addView(gradientRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6); bottomMargin = dp(8) })
         root.addView(label("Preview", 12f, Theme.muted).apply {
             typeface = Theme.semibold
             setPadding(0, dp(4), 0, dp(4))
@@ -196,9 +157,6 @@ class WidgetConfigActivity : Activity() {
             val light = theme.selectedItemPosition == 1
             val foreground = if (light) 0xff18181b.toInt() else 0xfffafafa.toInt()
             val muted = if (light) 0xff52525b.toInt() else 0xffa1a1aa.toInt()
-            activityList.visibility = if (mode.selectedItemPosition == 0) View.VISIBLE else View.GONE
-            pages.visibility = if (mode.selectedItemPosition == 1) View.VISIBLE else View.GONE
-            root.getChildAt(root.indexOfChild(pages) - 1).visibility = pages.visibility
             preview.removeAllViews()
             preview.background = Theme.bordered(
                 if (light) 0xfffafafa.toInt() else 0xff101012.toInt(),
@@ -206,26 +164,30 @@ class WidgetConfigActivity : Activity() {
                 dp(16).toFloat(),
                 dp(1),
             )
-            val chosen = if (mode.selectedItemPosition == 1)
-                Store.habits.drop(pages.selectedItemPosition * 4).take(4)
-            else Store.habits.filterIndexed { i, _ -> boxes[i].isChecked }
+            val chosen = habits.filterIndexed { i, _ -> boxes[i].isChecked }
             if (chosen.isEmpty()) preview.addView(label("Select an activity to preview", 14f, muted))
-            chosen.forEach { habit ->
+            chosen.forEachIndexed { index, habit ->
+                if (index > 0) preview.addView(View(this), LinearLayout.LayoutParams(-1, dp(12)))
                 val heading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-                heading.addView(label(habit.name, 15f, foreground).apply { typeface = Theme.semibold }, LinearLayout.LayoutParams(0, -2, 1f))
-                heading.addView(label("${habit.count(Dates.today())} today", 12f, muted))
+                heading.addView(label(habit.name, 15f, foreground).apply { typeface = Theme.semibold; setPadding(0, 0, dp(6), 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+                heading.addView(label(habit.widgetTodayLabel(habit.id in automated), 12f, muted))
                 preview.addView(heading)
-                if (pinKind != "quick") {
+                if (kind != "quick") {
                     val graph = ImageView(this).apply {
                         scaleType = ImageView.ScaleType.CENTER
                         contentDescription = "${habit.name} widget preview"
                     }
                     preview.addView(graph, LinearLayout.LayoutParams(-1, dp(116)))
                     graph.post {
-                        if (graph.width > 0) graph.setImageBitmap(Theme.graph(habit, 52, graph.width, dp(116), color.selectedItemPosition, light, gradientSwitch.isChecked, center = true))
+                        if (graph.width > 0) {
+                            val inset = Theme.centeredGraphInset(graph.width, resources.displayMetrics.density)
+                            heading.setPadding(inset, 0, inset, 0)
+                            graph.setImageBitmap(Theme.graph(habit, 52, graph.width, dp(116), light = light,
+                                binary = habit.id in automated, center = true))
+                        }
                     }
                 }
-                if (pinKind != "graph") preview.addView(TextView(this).apply {
+                if (kind != "graph") preview.addView(TextView(this).apply {
                     text = "+ Log ${habit.name}"
                     textSize = 13f
                     gravity = Gravity.CENTER
@@ -233,25 +195,35 @@ class WidgetConfigActivity : Activity() {
                     background = Theme.shape(foreground, dp(10).toFloat())
                     setPadding(dp(12), dp(10), dp(12), dp(10))
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4); bottomMargin = dp(12) })
+                }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
             }
             Unit
         }
         updatePreview = refreshPreview
-        mode.onChange = refreshPreview
-        pages.onChange = refreshPreview
-        color.onChange = refreshPreview
         theme.onChange = refreshPreview
         refreshPreview()
-        root.addView(
-            button("Save widget") {
-                val chosen =
-                    if (mode.selectedItemPosition == 1)
-                        Store.habits.drop(pages.selectedItemPosition * 4).take(4).map { it.id }
-                    else
-                        boxes.mapIndexedNotNull { i, b ->
-                            if (b.isChecked) Store.habits[i].id else null
-                        }
+        val footer = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+            setBackgroundColor(Theme.bg)
+        }
+        page.addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)))
+        page.addView(footer, LinearLayout.LayoutParams(-1, -2))
+        footer.addView(
+            button("Cancel") { finish() }.apply {
+                textSize = 14f
+                stateListAnimator = null
+                minimumWidth = 0
+                background = Theme.bordered(Theme.track, Theme.controlBorder, dp(10).toFloat(), dp(1))
+                setTextColor(Theme.text)
+            },
+            LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(10) },
+        )
+        footer.addView(
+            button(if (creating) "Add widget" else "Save changes") {
+                val chosen = habits.mapIndexedNotNull { i, habit ->
+                    habit.id.takeIf { boxes[i].isChecked }
+                }
                 if (chosen.isEmpty()) {
                     Toast.makeText(this, "Choose at least one activity", Toast.LENGTH_SHORT).show()
                     return@button
@@ -259,17 +231,9 @@ class WidgetConfigActivity : Activity() {
                 val config =
                     JSONObject()
                         .put("ids", JSONArray(chosen))
-                        .put(
-                            "pageIndex",
-                            if (mode.selectedItemPosition == 1) pages.selectedItemPosition else -1,
-                        )
-                        .put("owner", if (Store.demo) "demo" else Store.auth.currentUser!!.uid)
-                        .put("color", color.selectedItemPosition)
-                        .put("fitWidth", true)
-                        .put("weeks", 52)
+                        .put("owner", Store.trackingOwner() ?: return@button)
                         .put("theme", if (theme.selectedItemPosition == 0) "dark" else "light")
-                        .put("gradient", gradientSwitch.isChecked)
-                if (pinKind != null) {
+                if (creating) {
                     val manager = AppWidgetManager.getInstance(this)
                     if (!manager.isRequestPinAppWidgetSupported) {
                         Toast.makeText(
@@ -281,7 +245,7 @@ class WidgetConfigActivity : Activity() {
                         return@button
                     }
                     val cls =
-                        when (pinKind) {
+                        when (kind) {
                             "quick" -> QuickWidget::class.java
                             "graph" -> GraphWidget::class.java
                             else -> LogGraphWidget::class.java
@@ -295,16 +259,22 @@ class WidgetConfigActivity : Activity() {
                             PendingIntent.FLAG_UPDATE_CURRENT or
                                 PendingIntent.FLAG_MUTABLE,
                         )
-                    manager.requestPinAppWidget(
+                    val accepted = manager.requestPinAppWidget(
                         android.content.ComponentName(this, cls),
                         Bundle(),
                         callback,
                     )
+                    if (accepted) finish()
+                    else Toast.makeText(this, "The launcher couldn't add this widget", Toast.LENGTH_LONG).show()
+                    return@button
+                }
+                val manager = AppWidgetManager.getInstance(this)
+                if (manager.getAppWidgetInfo(id) == null) {
+                    Toast.makeText(this, "This widget was removed", Toast.LENGTH_LONG).show()
                     finish()
                     return@button
                 }
                 Store.prefs.edit().putString("widget_$id", config.toString()).apply()
-                val manager = AppWidgetManager.getInstance(this)
                 Widgets.update(this, manager, id)
                 setResult(RESULT_OK, Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id))
                 finish()
@@ -314,17 +284,7 @@ class WidgetConfigActivity : Activity() {
                 stateListAnimator = null
                 background = Theme.shape(Theme.text, dp(10).toFloat())
             },
-            LinearLayout.LayoutParams(-1, dp(48)),
-        )
-        root.addView(
-            button("Cancel") { finish() }
-                .apply {
-                    textSize = 14f
-                    stateListAnimator = null
-                    background = Theme.bordered(Theme.track, Theme.controlBorder, dp(10).toFloat(), dp(1))
-                    setTextColor(Theme.text)
-                },
-            LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(10) },
+            LinearLayout.LayoutParams(0, dp(48), 1f),
         )
     }
 }

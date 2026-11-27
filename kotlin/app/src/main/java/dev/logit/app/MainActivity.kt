@@ -10,6 +10,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.google.android.gms.auth.api.signin.*
 import com.google.android.gms.common.api.ApiException
 import com.google.firebase.auth.GoogleAuthProvider
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelChildren
@@ -17,7 +18,6 @@ import kotlinx.coroutines.launch
 
 class MainActivity : Activity() {
     private var dashboardScroll: ScrollView? = null
-    private var page = 0
     private var focus: String? = null
     private var authBusy = false
     private var authError: String? = null
@@ -45,6 +45,7 @@ class MainActivity : Activity() {
         super.onResume()
         resumed = true
         PhoneTracking.schedule()
+        healthScope.launch(Dispatchers.IO) { PhoneTracking.run(applicationContext, onReturn = true) }
         PhoneTracking.syncSleep()
         AppUpdates.refresh(this) { render() }
         checkHealth(force = true)
@@ -197,15 +198,13 @@ class MainActivity : Activity() {
                 )
             }
         section.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
-        section.addView(
-            button("+ Add") { add() }
+        val addButton = button("+ Add") { add() }
                 .apply {
                     textSize = 14f
                     setPadding(dp(14), 0, dp(14), 0)
                     stateListAnimator = null
-                },
-            LinearLayout.LayoutParams(-2, dp(44)),
-        )
+                }
+        section.addView(addButton, LinearLayout.LayoutParams(-2, dp(44)))
         root.addView(section)
         val last = Store.lastLog()
         val tools = row().apply { setPadding(0, 0, 0, dp(8)) }
@@ -272,13 +271,10 @@ class MainActivity : Activity() {
             }
             root.addView(emptyCard, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         }
-        focus?.let { id ->
-            val at = Store.habits.indexOfFirst { it.id == id }
-            if (at >= 0) page = at / 4
-            focus = null
-        }
-        page = page.coerceIn(0, ((Store.habits.size - 1) / 4).coerceAtLeast(0))
-        Store.habits.drop(page * 4).take(4).forEach { h ->
+        var firstActivityOptions: View? = null
+        val automatedActivities = Store.trackingOwner()?.let(PhoneTracking::automatedActivities).orEmpty()
+        Store.habits.forEach { h ->
+            val automated = h.id in automatedActivities
             val card =
                 LinearLayout(this).apply {
                     orientation = 1
@@ -296,16 +292,15 @@ class MainActivity : Activity() {
                 },
                 LinearLayout.LayoutParams(0, -2, 1f),
             )
-            top.addView(
-                icon("⋯", "Options for ${h.name}") { activityOptions(h) }.apply {
-                    val pill = Theme.bordered(Theme.track, Theme.cardBorder, dp(10).toFloat(), dp(1))
-                    background = android.graphics.drawable.InsetDrawable(pill, dp(4), dp(6), dp(4), dp(6))
-                    setTextColor(Theme.muted)
-                    textSize = 18f
-                    tooltipText = "Activity options"
-                },
-                LinearLayout.LayoutParams(dp(44), dp(44)),
-            )
+            val options = icon("⋯", "Options for ${h.name}") { activityOptions(h) }.apply {
+                val pill = Theme.bordered(Theme.track, Theme.cardBorder, dp(10).toFloat(), dp(1))
+                background = android.graphics.drawable.InsetDrawable(pill, dp(4), dp(6), dp(4), dp(6))
+                setTextColor(Theme.muted)
+                textSize = 18f
+                tooltipText = "Activity options"
+            }
+            if (firstActivityOptions == null) firstActivityOptions = options
+            top.addView(options, LinearLayout.LayoutParams(dp(44), dp(44)))
             val grip =
                 label("⠿", 24f, Theme.muted).apply {
                     gravity = Gravity.CENTER
@@ -349,82 +344,73 @@ class MainActivity : Activity() {
                 }
             }
             card.addView(
-                HeatmapView(this, h, historyWeeks).apply {
+                HeatmapView(this, h, historyWeeks, binary = automated).apply {
                     contentDescription = "${h.name} history, last $historyWeeks weeks"
                 },
                 LinearLayout.LayoutParams(-1, dp(116)).apply {
                     bottomMargin = dp(2)
                 },
             )
-            val actions = row()
-            actions.addView(
-                quietAction("Add for yesterday") { backdate(h) }.apply {
-                    gravity = Gravity.CENTER_VERTICAL or Gravity.START
-                    setPadding(0, 0, dp(8), 0)
-                    textSize = 12f
-                    contentDescription = "Add ${h.name} for yesterday"
-                },
-                LinearLayout.LayoutParams(0, dp(44), 1f),
-            )
-            actions.addView(
-                button("+ Log today") {
-                        Store.log(h.id, 1) { error -> if (error != null) toast(error) }
+            if (automated) {
+                val gesture = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onDown(event: MotionEvent) = true
+
+                    override fun onDoubleTap(event: MotionEvent): Boolean {
+                        backdate(h, includeToday = true)
+                        return true
                     }
-                    .apply {
-                        textSize = 13f
-                        minHeight = dp(44)
-                        minimumHeight = dp(44)
-                        minimumWidth = 0
-                        minWidth = 0
-                        stateListAnimator = null
-                        val surface = Theme.shape(Theme.text, dp(8).toFloat())
-                        background = android.graphics.drawable.InsetDrawable(surface, 0, dp(4), 0, dp(4))
-                        gravity = Gravity.CENTER
-                        setPadding(dp(14), 0, dp(14), 0)
-                        contentDescription = "Log ${h.name} for today"
+                })
+                card.setOnTouchListener { _, event -> gesture.onTouchEvent(event) }
+                card.addView(label("Automatic tracking · ${h.widgetTodayLabel(true)}", 12f, Theme.muted))
+            } else {
+                val actions = row()
+                actions.addView(
+                    quietAction("Add for yesterday") { backdate(h) }.apply {
+                        gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                        setPadding(0, 0, dp(8), 0)
+                        textSize = 12f
+                        contentDescription = "Add ${h.name} for yesterday"
                     },
-                LinearLayout.LayoutParams(-2, dp(44)),
-            )
-            card.addView(actions)
+                    LinearLayout.LayoutParams(0, dp(44), 1f),
+                )
+                actions.addView(
+                    button("+ Log today") {
+                            Store.log(h.id, 1) { error -> if (error != null) toast(error) }
+                        }
+                        .apply {
+                            textSize = 13f
+                            minHeight = dp(44)
+                            minimumHeight = dp(44)
+                            minimumWidth = 0
+                            minWidth = 0
+                            stateListAnimator = null
+                            val surface = Theme.shape(Theme.text, dp(8).toFloat())
+                            background = android.graphics.drawable.InsetDrawable(surface, 0, dp(4), 0, dp(4))
+                            gravity = Gravity.CENTER
+                            setPadding(dp(14), 0, dp(14), 0)
+                            contentDescription = "Log ${h.name} for today"
+                        },
+                    LinearLayout.LayoutParams(-2, dp(44)),
+                )
+                card.addView(actions)
+            }
             root.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         }
-        if (Store.habits.size > 4) {
-            val nav = row().apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, 0) }
-            fun pageButton(symbol: String, description: String, enabled: Boolean, action: () -> Unit) =
-                quietAction(symbol, action).apply {
-                    isEnabled = enabled
-                    alpha = if (enabled) 1f else .35f
-                    textSize = 16f
-                    setTextColor(Theme.text)
-                    val surface = Theme.bordered(Theme.card, Theme.controlBorder, dp(10).toFloat(), dp(1))
-                    background = android.graphics.drawable.InsetDrawable(surface, dp(2), dp(4), dp(2), dp(4))
-                    gravity = Gravity.CENTER
-                    setPadding(0, 0, 0, 0)
-                    contentDescription = description
-                }
-            nav.addView(
-                pageButton("‹", "Previous activity page", page > 0) {
-                    page--
-                    render()
-                },
-                LinearLayout.LayoutParams(dp(44), dp(44)),
-            )
-            nav.addView(
-                label("${page+1} / ${(Store.habits.size+3)/4}", 12f, Theme.muted).apply {
-                    gravity = Gravity.CENTER
-                    typeface = Theme.semibold
-                },
-                LinearLayout.LayoutParams(dp(64), dp(44)),
-            )
-            nav.addView(
-                pageButton("›", "Next activity page", (page + 1) * 4 < Store.habits.size) {
-                    page++
-                    render()
-                },
-                LinearLayout.LayoutParams(dp(44), dp(44)),
-            )
-            root.addView(nav)
+        val fromWidget = focus != null || intent.getBooleanExtra("log", false) ||
+            intent.action?.startsWith("widget-open:") == true
+        focus?.let { id ->
+            root.findViewWithTag<View>(id)?.let { card ->
+                scroll.post { scroll.scrollTo(0, card.top) }
+                focus = null
+            }
         }
+        if (!fromWidget) Introduction.maybeStart()
+        Introduction.show(this, "home", addButton, firstActivityOptions)
+    }
+
+    @Deprecated("Handled by Android for normal navigation")
+    override fun onBackPressed() {
+        if (!Introduction.dismiss(this, "home")) super.onBackPressed()
     }
 
     private fun addUpdateBanner(root: LinearLayout, version: String) {
@@ -450,9 +436,12 @@ class MainActivity : Activity() {
 
     private fun activityOptions(habit: Habit) {
         val colorIdx = habit.color.coerceIn(0, Theme.colors.lastIndex)
-        val goalSummary = habit.goal?.let {
-            "${it.target} ${if (it.period == "weekly") "per week" else "per day"}"
-        } ?: "No goal set"
+        val owner = Store.trackingOwner()
+        val sleep = owner?.let(PhoneTracking::sleep)?.takeIf { it.activityId == habit.id }
+        val automated = owner?.let(PhoneTracking::automatedActivities)?.contains(habit.id) == true
+        val goalSummary = sleep?.let { "${formatUsageMinutes(it.goalMinutes)} minimum sleep" }
+            ?: habit.goal?.let { "${it.target} ${if (it.period == "weekly") "per week" else "per day"}" }
+            ?: "No goal set"
         lateinit var dialog: PrettyDialog
 
         fun optionRow(title: String, subtitle: String, swatchColor: Int? = null, destructive: Boolean = false, action: () -> Unit) =
@@ -461,7 +450,11 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER_VERTICAL
                 minimumHeight = dp(48)
                 setPadding(dp(12), dp(7), dp(12), dp(7))
-                if (destructive) background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
+                background = android.graphics.drawable.RippleDrawable(
+                    android.content.res.ColorStateList.valueOf(Theme.muted and 0x00ffffff or 0x22000000),
+                    null,
+                    Theme.shape(Color.WHITE, dp(8).toFloat()),
+                )
                 isClickable = true
                 isFocusable = true
                 contentDescription = "$title, $subtitle"
@@ -484,7 +477,7 @@ class MainActivity : Activity() {
                     addView(subRow, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
                 }
                 addView(textCol, LinearLayout.LayoutParams(0, -2, 1f))
-                addView(label("›", 18f, Theme.muted).apply { setPadding(dp(8), 0, 0, 0) })
+                if (!destructive) addView(label("›", 18f, Theme.muted).apply { setPadding(dp(8), 0, 0, 0) })
                 setOnClickListener {
                     dialog.dismiss()
                     action()
@@ -492,35 +485,28 @@ class MainActivity : Activity() {
             }
 
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val actions = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
-        }
         fun addOption(row: View) {
-            if (actions.childCount > 0) {
-                actions.addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)).apply {
+            if (list.childCount > 0) {
+                list.addView(themedDivider(), LinearLayout.LayoutParams(-1, dp(1)).apply {
                     marginStart = dp(12)
                     marginEnd = dp(12)
                 })
             }
-            actions.addView(row, LinearLayout.LayoutParams(-1, -2))
+            list.addView(row, LinearLayout.LayoutParams(-1, -2))
         }
-        addOption(optionRow("Rename & edit", goalSummary) { editActivity(habit) })
-        addOption(
-            optionRow("Activity colour", Theme.names[colorIdx], Theme.colors[colorIdx]) {
-                activityColourPicker(habit)
-            },
-        )
-
-        if (Store.trackingOwner()?.let(PhoneTracking::sleep)?.activityId == habit.id) {
-            addOption(optionRow("Sleep history", "Review and edit your sleep") {
-                openTracking("sleep")
-            })
+        addOption(optionRow("Edit activity", goalSummary) { editActivity(habit) })
+        addOption(optionRow("Activity colour", Theme.names[colorIdx], Theme.colors[colorIdx]) {
+            activityColourPicker(habit)
+        })
+        if (automated) {
+            addOption(optionRow("Log manually", "Choose today or yesterday") { backdate(habit, includeToday = true) })
         }
-        list.addView(actions)
+        if (sleep != null) {
+            addOption(optionRow("Sleep history", "Review and edit your sleep") { openTracking("sleep") })
+        }
         list.addView(optionRow("Delete activity", "Permanently removes its history", destructive = true) {
             confirmDelete(habit)
-        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
 
         dialog = PrettyDialog.Builder(this)
             .setTitle(habit.name)
@@ -659,7 +645,12 @@ class MainActivity : Activity() {
             option("Statistics") { openDetails("statistics") }
             option("Tracking") { openTracking("tracking") }
             option("Goal reminders") { openDetails("reminders") }
-            option("Add a widget") { openDetails("widgets") }
+            option("Widgets") { openDetails("widgets") }
+            option("Introduction") {
+                Introduction.start()
+                dashboardScroll?.scrollTo(0, 0)
+                render()
+            }
         }
         val updateDot = if (AppUpdates.cachedUpdate(this)) Theme.colors[0] else null
         option("Check for updates", badgeColor = updateDot) { AppUpdates.show(this) }

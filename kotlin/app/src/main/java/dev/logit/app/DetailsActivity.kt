@@ -69,7 +69,7 @@ class DetailsActivity : Activity() {
             }
             insets
         }
-        val title = when (screen) { "reminders" -> "Goal reminders"; "widgets" -> "Add a widget"; else -> "Statistics" }
+        val title = when (screen) { "reminders" -> "Goal reminders"; "widgets" -> "Widgets"; else -> "Statistics" }
         root.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(2), 0, dp(6))
@@ -87,13 +87,18 @@ class DetailsActivity : Activity() {
             }, LinearLayout.LayoutParams(0, -2, 1f))
         })
         when (screen) {
-            "reminders" -> reminderControls(root)
-            "widgets" -> widgetTypes(root)
+            "reminders" -> Introduction.show(this, screen, reminderControls(root))
+            "widgets" -> Introduction.show(this, screen, widgetTypes(root))
             else -> statistics(root)
         }
     }
 
-    private fun widgetTypes(root: LinearLayout) {
+    @Deprecated("Handled by Android for normal navigation")
+    override fun onBackPressed() {
+        if (!Introduction.dismiss(this, intent.getStringExtra("screen").orEmpty())) super.onBackPressed()
+    }
+
+    private fun widgetTypes(root: LinearLayout): View {
         root.addView(label("Pick a layout to configure and add to your home screen.", 14f, Theme.muted))
         val sleepAvailable = Store.trackingOwner()?.let(PhoneTracking::sleep) != null
         val items = listOf(
@@ -101,7 +106,9 @@ class DetailsActivity : Activity() {
             Triple("Heatmap", "Recent weeks completion grid at a glance.", "graph"),
             Triple("Heatmap + log", "Completion grid with an overlaid + Log button.", "log"),
         ) + if (sleepAvailable) listOf(Triple("Sleep", "Your latest sleep and progress toward your goal.", "sleep")) else emptyList()
-        items.forEachIndexed { index, (name, subtitle, kind) ->
+        val layouts = column().apply { background = null }
+        root.addView(layouts)
+        items.forEach { (name, subtitle, kind) ->
             val card = panel().apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -131,13 +138,45 @@ class DetailsActivity : Activity() {
                     }
                 }
             }
-            root.addView(card, LinearLayout.LayoutParams(-1, -2).apply {
-                topMargin = dp(if (index == 0) 10 else 10)
-            })
+            layouts.addView(card, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
         }
+        val installed = Widgets.installed(this)
+        if (installed.isNotEmpty()) {
+            root.addView(label("On your home screen", 17f).apply {
+                typeface = Theme.semibold
+                setPadding(0, dp(18), 0, dp(6))
+            })
+            val habits = Store.habits.associateBy { it.id }
+            installed.forEach { (id, name) ->
+                val config = Widgets.config(id)
+                val activities = Widgets.selectedIds(config).mapNotNull { habits[it]?.name }
+                val surface = if (config.optString("theme") == "light") "Light" else "Dark"
+                val summary = listOf(surface, activities.joinToString(", ")).filter(String::isNotBlank).joinToString(" · ")
+                root.addView(panel().apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(LinearLayout(this@DetailsActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        addView(label(name, 15f).apply { typeface = Theme.semibold })
+                        addView(label(summary, 13f, Theme.muted))
+                    }, LinearLayout.LayoutParams(0, -2, 1f))
+                    addView(quietAction("Edit") {
+                        startActivity(Intent(this@DetailsActivity, WidgetConfigActivity::class.java)
+                            .putExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_ID, id))
+                    }.apply {
+                        minimumHeight = dp(44)
+                        setTextColor(Theme.text)
+                        background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
+                        setPadding(dp(14), 0, dp(14), 0)
+                        contentDescription = "Edit $name widget"
+                    }, LinearLayout.LayoutParams(-2, -2))
+                }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+            }
+        }
+        return layouts
     }
 
-    private fun reminderControls(root: LinearLayout) {
+    private fun reminderControls(root: LinearLayout): View {
         root.addView(label("Choose which nudges you want on this phone. Times are in India time.", 14f, Theme.muted))
         val main = panel()
 
@@ -213,6 +252,7 @@ class DetailsActivity : Activity() {
         root.addView(label("Weekly goals get a Sunday nudge and a Monday follow-up.", 13f, Theme.muted).apply {
             setPadding(0, dp(10), 0, 0)
         })
+        return main
     }
 
     private fun showThemedTimePicker(title: String, initialMinutes: Int, onPick: (Int) -> Unit) {

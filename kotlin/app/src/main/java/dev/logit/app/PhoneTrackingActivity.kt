@@ -31,12 +31,13 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class PhoneTrackingActivity : ComponentActivity() {
-    private val screen get() = intent.getStringExtra("trackingScreen")
+    private val screen get() = intent.getStringExtra("trackingScreen") ?: "apps"
     private var selectedDay: LocalDate? = null
     private var offerWidget = false
     private var scroll: ScrollView? = null
@@ -66,9 +67,15 @@ class PhoneTrackingActivity : ComponentActivity() {
         super.onResume()
         PhoneTracking.updated = { if (!isFinishing && !isDestroyed) render() }
         PhoneTracking.schedule()
+        healthScope.launch(Dispatchers.IO) { PhoneTracking.run(applicationContext, onReturn = true) }
         PhoneTracking.syncSleep()
         render()
         maybeOfferWidget()
+        intent.getBooleanExtra("editSleepGoal", false).takeIf { it }?.let {
+            intent.removeExtra("editSleepGoal")
+            val owner = Store.trackingOwner()
+            if (owner != null) PhoneTracking.sleep(owner)?.let { sleepSetup(owner, it) }
+        }
         if (screen == "health") refreshHealth(force = true, announce = false)
     }
 
@@ -123,9 +130,13 @@ class PhoneTrackingActivity : ComponentActivity() {
         root.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             addView(quietAction("‹") { finish() }.apply {
-                textSize = 26f
+                textSize = 22f
+                setTextColor(Theme.text)
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, 0)
+                background = Theme.bordered(Theme.card, Theme.controlBorder, dp(12).toFloat(), dp(1))
                 contentDescription = "Back"
-            }, LinearLayout.LayoutParams(dp(44), dp(48)))
+            }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(12) })
             addView(label(title, 22f).apply { typeface = Theme.semibold },
                 LinearLayout.LayoutParams(0, -2, 1f))
             if (screen == "sleep") {
@@ -134,6 +145,9 @@ class PhoneTrackingActivity : ComponentActivity() {
                 if (owner != null && settings != null) {
                     addView(quietAction("Settings") { sleepSettings(owner, settings) }.apply {
                         minimumHeight = dp(44)
+                        setTextColor(Theme.text)
+                        background = Theme.bordered(Theme.card, Theme.controlBorder, dp(10).toFloat(), dp(1))
+                        setPadding(dp(12), 0, dp(12), 0)
                         contentDescription = "Sleep settings"
                     }, LinearLayout.LayoutParams(-2, -2))
                 }
@@ -152,16 +166,24 @@ class PhoneTrackingActivity : ComponentActivity() {
             }
             "sleep" -> {
                 showSleep(root, owner)
+                Introduction.show(this, screen, root.getChildAt(1))
                 return
             }
             "limits" -> showLimits(root, owner)
             "health" -> {
                 showHealth(root, owner)
+                Introduction.show(this, screen, root.getChildAt(1))
                 return
             }
             else -> showAppRules(root, owner)
         }
         root.addCard(permissionCard(owner))
+        Introduction.show(this, screen, root.getChildAt(1))
+    }
+
+    @Deprecated("Handled by Android for normal navigation")
+    override fun onBackPressed() {
+        if (!Introduction.dismiss(this, screen)) super.onBackPressed()
     }
 
     private fun refreshHealth(force: Boolean = false, announce: Boolean = force) {
@@ -645,7 +667,7 @@ class PhoneTrackingActivity : ComponentActivity() {
         val preselected = intent.getStringExtra("activityId")
         root.addCard(card().apply {
             addView(title("Log an activity from app use"))
-            addView(label("Set a minimum daily time in an app. LogIt marks the linked activity once when you reach it.", 14f, Theme.muted))
+            addView(label("Log once when you open an app or reach a daily time threshold.", 14f, Theme.muted))
             addAction("Add app rule", true) { appRuleEditor(owner, null, preselected) }
         })
         val habits = Store.habits.associateBy { it.id }
@@ -653,7 +675,7 @@ class PhoneTrackingActivity : ComponentActivity() {
             val habit = habits[rule.activityId] ?: continue
             root.addCard(card().apply {
                 addView(title(habit.name))
-                addView(label("${rule.app.label} · ${formatUsageMinutes(rule.minutes)} a day", 14f, Theme.muted))
+                addView(label("${rule.app.label} · ${rule.triggerLabel}", 14f, Theme.muted))
                 addAction("Edit rule") { appRuleEditor(owner, rule, null) }
             })
         }
@@ -672,17 +694,31 @@ class PhoneTrackingActivity : ComponentActivity() {
             }
         }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }
         form.addView(appButton, LinearLayout.LayoutParams(-1, -2))
-        val minimum = form.field("Minimum minutes per day", (rule?.minutes ?: 5).toString(), number = true)
+        val presetMinutes = listOf(0, 1, 5, 10, 15, 30, 60)
+        val currentMinutes = rule?.minutes ?: 5
+        form.addView(label("Log when", 13f, Theme.muted))
+        val trigger = ChoiceView(this, (presetMinutes.map { minutes ->
+            when (minutes) {
+                0 -> "Opened"
+                60 -> "1 hour"
+                else -> "$minutes min"
+            }
+        } + "Custom minutes").toTypedArray(), presetMinutes.indexOf(currentMinutes).takeIf { it >= 0 } ?: presetMinutes.size)
+        form.addView(trigger, LinearLayout.LayoutParams(-1, dp(48)))
+        val custom = form().apply { visibility = if (currentMinutes in presetMinutes) View.GONE else View.VISIBLE }
+        val minimum = custom.field("Minimum minutes per day", currentMinutes.coerceAtLeast(1).toString(), number = true)
+        form.addView(custom)
+        trigger.onChange = { custom.visibility = if (trigger.selectedItemPosition == presetMinutes.size) View.VISIBLE else View.GONE }
         val error = form.error()
         showForm("App rule", form, "Save rule", rule?.let {
             { PhoneTracking.saveAppRules(owner, PhoneTracking.appRules(owner).filterNot { current -> current == rule }); render() }
         }) { dialog ->
             val app = selectedApp
-            val count = minimum.text.toString().toIntOrNull()
+            val count = presetMinutes.getOrNull(trigger.selectedItemPosition) ?: minimum.text.toString().toIntOrNull()
             val activity = target()?.id
             if (activity == null) { error.text = "Choose or create an activity."; return@showForm }
             if (app == null) { error.text = "Choose an app to track."; return@showForm }
-            if (count == null || count !in 1..1440) {
+            if (count == null || count !in 0..1440 || (count == 0 && trigger.selectedItemPosition != 0)) {
                 error.text = "Enter 1 to 1,440 minutes."
                 return@showForm
             }

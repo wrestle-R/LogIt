@@ -86,3 +86,9 @@ export function reminderProgress(habit, day) {
   if (progress.period === "weekly" && new Date(day + "T00:00:00Z").getUTCDay() !== 0) return null;
   return progress;
 }
+
+export function leastUsedColour(colours, size) {
+  const counts = Array(size).fill(0);
+  for (const colour of colours) counts[Math.min(size - 1, Math.max(0, colour))]++;
+  return counts.indexOf(Math.min(...counts));
+}

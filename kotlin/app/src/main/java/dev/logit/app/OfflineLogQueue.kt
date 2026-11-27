@@ -114,9 +114,9 @@ object OfflineLogQueue {
     }
 
     @Synchronized
-    fun enqueue(owner: String, habit: String, day: String, delta: Int) {
+    fun enqueue(owner: String, habit: String, day: String, delta: Int, setOnce: Boolean = false) {
         check(Store.habitsFor(owner).any { it.id == habit }) { "Activity no longer exists" }
-        val op = LogOp(UUID.randomUUID().toString(), owner, habit, day, delta)
+        val op = LogOp(UUID.randomUUID().toString(), owner, habit, day, delta, automatic = setOnce)
         val history = undoHistory(owner)
         val previous = history.lastOrNull()
         persist(

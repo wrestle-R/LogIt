@@ -178,14 +178,35 @@ fun Activity.editActivity(
         override fun afterTextChanged(s: Editable?) {}
     })
 
-    fields.addView(fieldLabel("Goal frequency", topDp = if (habit == null) 14 else 0))
+    lateinit var dialog: PrettyDialog
+    val sleep = Store.trackingOwner()?.let(PhoneTracking::sleep)?.takeIf { it.activityId == habit?.id }
+    if (sleep != null) {
+        fields.addView(fieldLabel("Sleep goal", topDp = 8))
+        fields.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(48)
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+            background = Theme.bordered(Theme.bg, Theme.controlBorder, dp(10).toFloat(), dp(1))
+            val value = "${formatUsageMinutes(sleep.goalMinutes)} minimum"
+            addView(label(value, 14f), LinearLayout.LayoutParams(0, -2, 1f))
+            addView(label("Edit ›", 13f, Theme.muted))
+            contentDescription = "Edit Sleep goal, $value"
+            isFocusable = true
+            setOnClickListener {
+                dialog.dismiss()
+                startActivity(android.content.Intent(this@editActivity, PhoneTrackingActivity::class.java)
+                    .putExtra("trackingScreen", "sleep").putExtra("editSleepGoal", true))
+            }
+        }, LinearLayout.LayoutParams(-1, -2))
+    }
+    val frequencyLabel = if (sleep == null) "Goal frequency" else "Additional logging goal"
+    fields.addView(fieldLabel(frequencyLabel, topDp = if (habit == null || sleep != null) 14 else 0))
     fields.addView(segmentTrack, LinearLayout.LayoutParams(-1, -2))
     fields.addView(amountLabel)
     fields.addView(amountContainer, LinearLayout.LayoutParams(-1, -2))
     fields.addView(amountError)
     refreshSegments()
 
-    lateinit var dialog: PrettyDialog
     if (habit == null && onCreated == null) {
         fields.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
@@ -292,9 +313,9 @@ fun Activity.editActivity(
     dialog.show()
 }
 
-fun Activity.backdate(habit: Habit) {
+fun Activity.backdate(habit: Habit, includeToday: Boolean = false) {
     val today = LocalDate.parse(Dates.today())
-    var day = today.minusDays(1)
+    var day = if (includeToday) today else today.minusDays(1)
     val formatter = DateTimeFormatter.ofPattern("EEE, d MMM yyyy")
 
     val fields = column().apply { background = null; setPadding(0, 0, 0, 0) }
@@ -308,15 +329,12 @@ fun Activity.backdate(habit: Habit) {
     }
     lateinit var refreshChips: () -> Unit
 
-    val yesterdayChip = quietAction("Yesterday") {
-        day = today.minusDays(1)
+    fun chip(title: String, offset: Long) = quietAction(title) {
+        day = today.minusDays(offset)
         refreshChips()
-    }
-    val twoDaysChip = quietAction("2 days ago") {
-        day = today.minusDays(2)
-        refreshChips()
-    }
-    val chips = listOf(yesterdayChip to 1L, twoDaysChip to 2L)
+    } to offset
+    val chips = if (includeToday) listOf(chip("Today", 0), chip("Yesterday", 1))
+        else listOf(chip("Yesterday", 1), chip("2 days ago", 2))
     refreshChips = {
         dateValue.text = day.format(formatter)
         chips.forEach { (chip, offset) ->
@@ -333,8 +351,11 @@ fun Activity.backdate(habit: Habit) {
             chip.setPadding(dp(12), 0, dp(12), 0)
         }
     }
-    quickRow.addView(yesterdayChip, LinearLayout.LayoutParams(0, dp(38), 1f).apply { marginEnd = dp(8) })
-    quickRow.addView(twoDaysChip, LinearLayout.LayoutParams(0, dp(38), 1f))
+    chips.forEachIndexed { index, (view, _) ->
+        quickRow.addView(view, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+            if (index < chips.lastIndex) marginEnd = dp(8)
+        })
+    }
     fields.addView(quickRow, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
 
     val dateRow = LinearLayout(this).apply {
@@ -363,6 +384,10 @@ fun Activity.backdate(habit: Habit) {
         .setView(fields)
         .setNegativeButton("Cancel", null)
         .setPositiveButton("Add log") { _, _ ->
+            if (includeToday && Store.habits.any { it.id == habit.id && it.count(day.toString()) > 0 }) {
+                Toast.makeText(this, "${habit.name} already logged for ${dateValue.text}", Toast.LENGTH_SHORT).show()
+                return@setPositiveButton
+            }
             Store.log(habit.id, 1, day.toString()) { error ->
                 Toast.makeText(this, error ?: "Added for ${dateValue.text}", Toast.LENGTH_SHORT).show()
             }

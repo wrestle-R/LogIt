@@ -112,14 +112,20 @@ object Theme {
             setStroke(strokeWidthPx, stroke)
         }
 
+    fun centeredGraphInset(width: Int, density: Float): Int {
+        val cell = 14 * density
+        val gap = 3 * density
+        val columns = ((width + gap) / (cell + gap)).toInt().coerceIn(1, 52)
+        return ((width - (columns * (cell + gap) - gap)) / 2).toInt().coerceAtLeast(0)
+    }
+
     fun graph(
         h: Habit,
         weeks: Int,
         width: Int,
         height: Int,
-        color: Int = h.color,
         light: Boolean = light(),
-        gradient: Boolean = false,
+        binary: Boolean = false,
         center: Boolean = false,
     ): Bitmap {
         val density = Store.context.resources.displayMetrics.density
@@ -133,31 +139,23 @@ object Theme {
         val radius = 2f * density
         val visibleWeeks = minOf(weeks, maxOf(1, ((w + gap) / (cell + gap)).toInt()))
         val today = LocalDate.parse(Dates.today())
-        val accent = colors[color.coerceIn(0, 9)]
+        val accent = colors[h.color.coerceIn(colors.indices)]
         for (i in 0 until visibleWeeks * 7) {
             val day = today.monday().minusWeeks((visibleWeeks - 1).toLong()).plusDays(i.toLong())
             if (day > today) continue
             val n = h.count(day.toString())
             val base = if (light) Color.rgb(228, 228, 231) else Color.rgb(39, 39, 42)
-            val f = if (n == 0L) 0f else minOf(1f, .25f + n * .18f)
+            val f = when {
+                n == 0L -> 0f
+                binary -> 1f
+                else -> minOf(1f, .25f + n * .18f)
+            }
             paint.color =
                 Color.rgb(
                     (Color.red(base) * (1 - f) + Color.red(accent) * f).toInt(),
                     (Color.green(base) * (1 - f) + Color.green(accent) * f).toInt(),
                     (Color.blue(base) * (1 - f) + Color.blue(accent) * f).toInt(),
                 )
-            paint.shader =
-                if (gradient && n > 0)
-                    LinearGradient(
-                        0f,
-                        0f,
-                        w.toFloat(),
-                        hh.toFloat(),
-                        intArrayOf(paint.color, colors[(color + 1) % 10]),
-                        null,
-                        Shader.TileMode.CLAMP,
-                    )
-                else null
             val x =
                 i / 7 * (cell + gap) +
                     if (center) (w - (visibleWeeks * (cell + gap) - gap)) / 2 else 0f
@@ -307,11 +305,12 @@ class HeatmapView(
     context: android.content.Context,
     private val habit: Habit,
     private val weeks: Int = 20,
+    private val binary: Boolean = false,
 ) : android.view.View(context) {
     private var bitmap: Bitmap? = null
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        bitmap = Theme.graph(habit, weeks, w, h)
+        bitmap = Theme.graph(habit, weeks, w, h, binary = binary)
     }
 
     override fun onDraw(canvas: Canvas) {

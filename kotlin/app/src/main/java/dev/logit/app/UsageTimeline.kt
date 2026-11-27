@@ -27,6 +27,7 @@ internal data class SleepEstimate(val bedtime: Long, val wakeTime: Long)
 
 /** Reduces Android events to time on screen, without double-counting simultaneous apps. */
 internal class UsageTimeline(samples: List<UsageSample>, private val until: Long) {
+    private val openings = mutableMapOf<String, MutableList<Long>>()
     private val spans = mutableListOf<UsageSpan>()
     private val interactions = mutableListOf<Long>()
     private val interruptions = mutableListOf<Long>()
@@ -38,6 +39,7 @@ internal class UsageTimeline(samples: List<UsageSample>, private val until: Long
         var cursor = evidenceSince ?: until
         var interactive = false
         var locked = false
+        var screenStateKnown = false
         var lastInteraction: Long? = null
         var wasUsed = false
         val foreground = mutableSetOf<Pair<String, String>>()
@@ -48,10 +50,11 @@ internal class UsageTimeline(samples: List<UsageSample>, private val until: Long
             }
             cursor = event.time
             when (event.signal) {
-                UsageSignal.ScreenOn -> interactive = true
+                UsageSignal.ScreenOn -> { interactive = true; screenStateKnown = true }
                 UsageSignal.ScreenOff -> {
                     if (wasUsed) lastInteraction = event.time
                     interactive = false
+                    screenStateKnown = true
                     wasUsed = false
                 }
                 UsageSignal.Locked -> {
@@ -59,18 +62,21 @@ internal class UsageTimeline(samples: List<UsageSample>, private val until: Long
                     locked = true
                     wasUsed = false
                 }
-                UsageSignal.Unlocked -> { locked = false; interactive = true }
+                UsageSignal.Unlocked -> { locked = false; interactive = true; screenStateKnown = true }
                 UsageSignal.Foreground -> {
                     foreground.add(event.app to event.activity)
-                    if (!hasScreenEvents) interactive = true
+                    if (!screenStateKnown) interactive = true
+                    if (!locked && interactive) openings.getOrPut(event.app, ::mutableListOf).add(event.time)
                 }
                 UsageSignal.Background -> {
                     foreground.remove(event.app to event.activity)
-                    if (!hasScreenEvents && foreground.isEmpty()) interactive = false
+                    if (!screenStateKnown && foreground.isEmpty()) interactive = false
                 }
                 UsageSignal.Restart -> {
                     interactive = false
-                    locked = true
+                    // A device without a keyguard may send no unlock event after reboot.
+                    locked = false
+                    screenStateKnown = false
                     wasUsed = false
                     lastInteraction = null
                     foreground.clear()
@@ -97,6 +103,10 @@ internal class UsageTimeline(samples: List<UsageSample>, private val until: Long
             if (apps.isNotEmpty() && span.apps.none { it in apps }) 0L
             else (minOf(span.end, end) - maxOf(span.start, start)).coerceAtLeast(0)
         }
+
+    fun meetsAppRule(app: String, minutes: Int, start: Long, end: Long): Boolean =
+        if (minutes == 0) openings[app]?.any { it in start until end } == true
+        else timeUsed(start, end, setOf(app)) >= Duration.ofMinutes(minutes.toLong()).toMillis()
 
     fun hasFullDayEvidence(dayStart: Long, dayEnd: Long): Boolean = hasScreenEvents &&
         evidenceSince?.let { it <= dayStart } == true && interruptions.none { it in dayStart until dayEnd }

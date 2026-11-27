@@ -92,6 +92,7 @@ internal object HealthTracking {
             .put("since", rule.since.toString()).toString())
         editor.apply()
         lastCheck = null
+        Widgets.refresh(Store.context)
     }
 
     fun removeActivity(owner: String, id: String) {

@@ -41,7 +41,7 @@ class SleepWidget : AppWidgetProvider() {
                 manager.requestPinAppWidget(ComponentName(context, SleepWidget::class.java), null, null)
         }
 
-        private fun historyChart(nights: List<Int?>, goal: Int, width: Int, height: Int, density: Float): Bitmap {
+        private fun historyChart(nights: List<Int?>, goal: Int, width: Int, height: Int, density: Float, accent: Int): Bitmap {
             val chartWidth = width.coerceIn(96, 400)
             val bitmap = Bitmap.createBitmap((chartWidth * density).toInt(), (height * density).toInt(),
                 Bitmap.Config.ARGB_8888)
@@ -60,7 +60,7 @@ class SleepWidget : AppWidgetProvider() {
                 val barHeight = if (minutes == null) 2f else (minutes.toFloat() / peak * height).coerceAtLeast(3f)
                 paint.color = when {
                     minutes == null -> Theme.controlBorder
-                    minutes >= goal -> sleepGoalColor()
+                    minutes >= goal -> accent
                     index == lastRecorded -> Theme.text
                     else -> Theme.muted
                 }
@@ -96,6 +96,7 @@ class SleepWidget : AppWidgetProvider() {
             val detailHeight = maxOf(86 * fontScale, configuration.screenHeightDp * 0.17f)
             val dateFormat = DateTimeFormatter.ofPattern("d MMM")
             val goal = sleep?.goalMinutes ?: SleepTracking.defaultGoalMinutes
+            val accent = habit?.let { Theme.colors[it.color.coerceIn(Theme.colors.indices)] } ?: sleepGoalColor()
             val date = dates.getOrNull(latest)
             val title = if (date == null || date == today) "Sleep" else "Sleep · ${date.format(dateFormat)}"
             val value = when {
@@ -149,7 +150,7 @@ class SleepWidget : AppWidgetProvider() {
                         setTextColor(R.id.sleep_widget_history, Theme.muted)
                         if (chart) {
                             val chartHeight = (height - 76 * fontScale - 42).toInt().coerceIn(20, 240)
-                            setImageViewBitmap(R.id.sleep_widget_chart, historyChart(nights, goal, width - 24, chartHeight, metrics.density.coerceAtMost(2f)))
+                            setImageViewBitmap(R.id.sleep_widget_chart, historyChart(nights, goal, width - 24, chartHeight, metrics.density.coerceAtMost(2f), accent))
                             setContentDescription(R.id.sleep_widget_chart, dates.zip(nights).joinToString(", ") { (day, minutes) ->
                                 "${day.format(dateFormat)}, ${minutes?.let(::formatUsageMinutes) ?: "no entry"}"
                             })

@@ -50,6 +50,32 @@ class UsageTimelineTest {
     }
 
     @Test
+    fun appRulesWorkAfterRebootWithoutAnUnlockEvent() {
+        val timeline = UsageTimeline(listOf(
+            sample(9, 0, UsageSignal.ScreenOn),
+            sample(9, 1, UsageSignal.Restart),
+            sample(9, 3, UsageSignal.Foreground, "journal"),
+            sample(9, 4, UsageSignal.Background, "journal"),
+        ), at(10))
+
+        assertTrue(timeline.meetsAppRule("journal", 0, at(9, 3), at(9, 3) + 1))
+        assertTrue(timeline.meetsAppRule("journal", 1, at(9), at(10)))
+        assertFalse(timeline.meetsAppRule("journal", 5, at(9), at(10)))
+        assertFalse(timeline.meetsAppRule("journal", 0, at(9, 4), at(10)))
+    }
+
+    @Test
+    fun openingRuleIgnoresForegroundEventsWhileExplicitlyLocked() {
+        val timeline = UsageTimeline(listOf(
+            sample(9, 0, UsageSignal.ScreenOn),
+            sample(9, 1, UsageSignal.Locked),
+            sample(9, 2, UsageSignal.Foreground, "journal"),
+        ), at(10))
+
+        assertFalse(timeline.meetsAppRule("journal", 0, at(9), at(10)))
+    }
+
+    @Test
     fun notificationWakesDoNotEndTheOvernightEstimate() {
         val timeline = UsageTimeline(listOf(
             sample(22, 47, UsageSignal.Unlocked, previous = true),

@@ -339,10 +339,11 @@ object Store {
     fun addActivity(name: String, goal: Goal? = null, done: (id: String?, problem: String?) -> Unit) {
         val owner = trackingOwner()
         val order = System.currentTimeMillis()
+        val color = leastUsedColour(habits.map(Habit::color), Theme.colors.size)
         if (owner == DEMO) {
             val id = UUID.randomUUID().toString()
             localChange({ problem -> done(id.takeIf { problem == null }, problem) }) {
-                check(updateCache(owner, durable = true) { it + Habit(id, name, order = order, goal = goal) }) {
+                check(updateCache(owner, durable = true) { it + Habit(id, name, order = order, color = color, goal = goal) }) {
                     "Account changed"
                 }
             }
@@ -361,6 +362,7 @@ object Store {
                     "completions" to emptyList<String>(),
                     "dailyCounts" to emptyMap<String, Long>(),
                     "order" to order,
+                    "color" to color,
                     "createdAt" to FieldValue.serverTimestamp(),
                     "currentStreak" to 0,
                     "longestStreak" to 0,
@@ -372,7 +374,7 @@ object Store {
                 } else {
                     updateCache(owner) { habits ->
                         if (habits.any { it.id == ref.id }) habits
-                        else (habits + Habit(ref.id, name, order = order, goal = goal)).sortedBy { it.order }
+                        else (habits + Habit(ref.id, name, order = order, color = color, goal = goal)).sortedBy { it.order }
                     }
                     notifyChanged()
                     done(ref.id, null)
@@ -523,17 +525,23 @@ object Store {
             done("Sign in again before logging")
             return
         }
+        val setOnce = delta > 0 && id in PhoneTracking.automatedActivities(owner)
+        if (setOnce && habitsFor(owner).any { it.id == id && it.count(day) > 0 }) {
+            done(null)
+            return
+        }
         localChange(done) {
             if (owner == DEMO) {
                 changeDemoLog(id) { h ->
                     if (delta > 0) {
-                        demoUndo.add(LogOp(UUID.randomUUID().toString(), owner, id, day, delta))
+                        demoUndo.add(LogOp(UUID.randomUUID().toString(), owner, id, day, delta, automatic = setOnce))
                     } else if (delta < 0 && demoUndo.lastOrNull()?.let { it.habit == id && it.day == day } == true) {
                         demoUndo.removeAt(demoUndo.lastIndex)
                     }
-                    OfflineLogQueue.delta(h, day, delta)
+                    if (setOnce) OfflineLogQueue.applyToHabit(h, demoUndo.last())
+                    else OfflineLogQueue.delta(h, day, delta)
                 }
-            } else OfflineLogQueue.enqueue(owner, id, day, delta)
+            } else OfflineLogQueue.enqueue(owner, id, day, delta, setOnce)
         }
     }
 
@@ -629,4 +637,11 @@ object Store {
                     error?.invoke(it.localizedMessage ?: "Could not save colour")
                 }
     }
+}
+
+
+internal fun leastUsedColour(colours: List<Int>, size: Int): Int {
+    val counts = IntArray(size)
+    colours.forEach { counts[it.coerceIn(counts.indices)]++ }
+    return counts.indices.minBy { counts[it] }
 }

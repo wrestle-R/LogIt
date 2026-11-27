@@ -30,11 +30,33 @@ class GraphWidget : BaseWidget()
 class LogGraphWidget : BaseWidget()
 
 object Widgets {
+    private val providers = listOf(QuickWidget::class.java, GraphWidget::class.java, LogGraphWidget::class.java)
+
+    fun config(id: Int) = runCatching {
+        org.json.JSONObject(Store.prefs.getString("widget_$id", "{}").orEmpty())
+    }.getOrDefault(org.json.JSONObject())
+
+    fun selectedIds(config: org.json.JSONObject): List<String> {
+        val ids = config.optJSONArray("ids")
+        if (ids != null) return (0 until ids.length()).mapNotNull { ids.optString(it).takeIf(String::isNotBlank) }
+        val page = config.optInt("pageIndex", -1)
+        return if (page >= 0) Store.habits.drop(page * 4).take(4).map { it.id } else emptyList()
+    }
+
+    fun installed(c: Context): List<Pair<Int, String>> {
+        val manager = AppWidgetManager.getInstance(c)
+        val owner = Store.trackingOwner() ?: return emptyList()
+        return providers.zip(listOf("Quick log", "Heatmap", "Heatmap + log")).flatMap { (provider, label) ->
+            manager.getAppWidgetIds(ComponentName(c, provider)).asList().mapNotNull { id ->
+                if (config(id).optString("owner") == owner) id to label else null
+            }
+        }
+    }
+
     fun refresh(c: Context) {
         SleepWidget.refresh(c)
         val m = AppWidgetManager.getInstance(c)
-        listOf(QuickWidget::class.java, GraphWidget::class.java, LogGraphWidget::class.java)
-            .forEach { cls ->
+        providers.forEach { cls ->
                 m.getAppWidgetIds(ComponentName(c, cls)).forEach { update(c, m, it) }
             }
     }
@@ -109,27 +131,16 @@ object Widgets {
         val kind = info.provider.shortClassName
         val quick = kind.endsWith("QuickWidget")
         val log = kind.endsWith("LogGraphWidget")
-        val config = org.json.JSONObject(Store.prefs.getString("widget_$id", "{}") ?: "{}")
-        val owner =
-            if (Store.demo) "demo" else if (Store.signedIn) Store.auth.currentUser!!.uid else ""
-        val accountMatches = config.optString("owner") == owner && owner.isNotBlank()
-        val ids = config.optJSONArray("ids")
-        val selected =
-            if (ids == null) emptyList() else (0 until ids.length()).map { ids.getString(it) }
-        val modePage = config.optInt("pageIndex", -1)
-        val selectedIds =
-            if (modePage >= 0) Store.habits.drop(modePage * 4).take(4).map { it.id } else selected
-        val hs =
-            if (Store.ready && accountMatches)
-                selectedIds.mapNotNull { wanted -> Store.habits.find { it.id == wanted } }.take(4)
-            else emptyList()
+        val config = config(id)
+        val owner = Store.trackingOwner()
+        val activities = Store.habits.associateBy { it.id }
+        val automated = owner?.let(PhoneTracking::automatedActivities).orEmpty()
+        val hs = if (owner != null && config.optString("owner") == owner)
+            selectedIds(config).distinct().mapNotNull(activities::get)
+        else emptyList()
         val rv = RemoteViews(c.packageName, R.layout.widget)
         rv.removeAllViews(R.id.rows)
-        val compactGraph = !quick && requestedHeight < 176
-        if (quick || compactGraph) {
-            val pad = (8 * c.resources.displayMetrics.density).toInt()
-            rv.setViewPadding(R.id.root, pad, pad, pad, pad)
-        }
+        rv.setViewVisibility(R.id.overflow_hint, View.GONE)
         rv.setOnClickPendingIntent(R.id.root, click(c, id, null, false))
         val light = config.optString("theme", "dark") == "light"
         val fg = if (light) 0xff18181b.toInt() else 0xfffafafa.toInt()
@@ -153,16 +164,19 @@ object Widgets {
             val width = requestedWidth.coerceAtLeast(100)
             val height = requestedHeight.coerceAtLeast(60)
             val weeks = 52
-            val layout = WidgetLayout.fit(width, height, hs.size, quick)
+            val fontScale = c.resources.configuration.fontScale
+            val layout = WidgetLayout.fit(width, height, hs.size, quick, fontScale)
             val multiGrid = layout.columns == 2
-            val graphWidth = if (multiGrid) (width - 40) / 2 else width - 32
             val cellHeight = layout.rowHeight
+            val compact = layout.showGraph && cellHeight < WidgetLayout.graphRowHeight(fontScale)
+            val edgePadding = WidgetLayout.edgePadding(height, quick)
+            val paddingPx = (edgePadding * c.resources.displayMetrics.density).toInt()
+            rv.setViewPadding(R.id.root, paddingPx, paddingPx, paddingPx, paddingPx)
+            val graphWidth = (width - 2 * edgePadding) / layout.columns - if (compact) 0 else 8
             val capacity = layout.visible
-            val usedRows = (capacity + layout.columns - 1) / layout.columns
-            val showOverflow = capacity < hs.size && height - 24 - usedRows * cellHeight >= 24
             val shown = hs.take(capacity)
             rv.setContentDescription(R.id.root, "${shown.size} of ${hs.size} activities")
-            if (showOverflow) {
+            if (layout.showOverflow) {
                 rv.setViewVisibility(R.id.overflow_hint, View.VISIBLE)
                 rv.setTextViewText(R.id.overflow_hint, "+${hs.size - shown.size} more")
                 rv.setTextColor(R.id.overflow_hint, muted)
@@ -205,13 +219,13 @@ object Widgets {
                     )
                 }
                 row.setTextViewText(R.id.title, h.name)
-                row.setTextViewText(R.id.count, "${h.count(Dates.today())} today")
+                row.setTextViewText(R.id.count, h.widgetTodayLabel(h.id in automated))
                 row.setTextColor(R.id.title, fg)
                 row.setTextColor(R.id.count, muted)
                 row.setOnClickPendingIntent(R.id.row, click(c, id, h.id, quick))
                 row.setViewVisibility(R.id.quick_log, if (quick) View.VISIBLE else View.GONE)
-                row.setViewVisibility(R.id.plot, if (quick) View.GONE else View.VISIBLE)
-                row.setViewVisibility(R.id.overlay_log, if (log) View.VISIBLE else View.GONE)
+                row.setViewVisibility(R.id.plot, if (layout.showGraph) View.VISIBLE else View.GONE)
+                row.setViewVisibility(R.id.overlay_log, if (log && layout.showGraph) View.VISIBLE else View.GONE)
                 row.setContentDescription(
                     R.id.row,
                     if (quick) "Log ${h.name} for today" else "Open ${h.name} in LogIt",
@@ -220,21 +234,22 @@ object Widgets {
                 row.setContentDescription(R.id.overlay_log, "Log ${h.name} for today")
                 row.setOnClickPendingIntent(R.id.quick_log, click(c, id, h.id, false))
                 row.setOnClickPendingIntent(R.id.overlay_log, click(c, id, h.id, true))
-                if (!quick && android.os.Build.VERSION.SDK_INT >= 31) {
-                    val compact = compactGraph || cellHeight < 140
+                if (!quick) {
                     if (compact) row.setViewPadding(R.id.row, 0, 0, 0, 0)
                     row.setViewVisibility(
                         R.id.widget_heading,
                         if (compact) View.GONE else View.VISIBLE,
                     )
-                    row.setViewLayoutMargin(
-                        R.id.plot,
-                        RemoteViews.MARGIN_TOP,
-                        if (compact) 0f else 8f,
-                        android.util.TypedValue.COMPLEX_UNIT_DIP,
-                    )
+                    if (android.os.Build.VERSION.SDK_INT >= 31) {
+                        row.setViewLayoutMargin(
+                            R.id.plot,
+                            RemoteViews.MARGIN_TOP,
+                            if (compact) 0f else 8f,
+                            android.util.TypedValue.COMPLEX_UNIT_DIP,
+                        )
+                    }
                 }
-                if (!quick) {
+                if (layout.showGraph) {
                     if (android.os.Build.VERSION.SDK_INT >= 31) {
                         if (multiGrid && log) {
                             val dip = android.util.TypedValue.COMPLEX_UNIT_DIP
@@ -248,7 +263,7 @@ object Widgets {
                         row.setViewPadding(R.id.widget_heading, px, 0, px, 0)
                         row.setViewVisibility(
                             R.id.widget_footer,
-                            if (hs.size == 1 && height >= 196) View.VISIBLE else View.GONE,
+                            if (hs.size == 1 && cellHeight >= WidgetLayout.graphRowHeight(fontScale) + 22) View.VISIBLE else View.GONE,
                         )
                         row.setTextViewText(R.id.widget_footer, "Last $cols weeks")
                         row.setTextColor(R.id.widget_footer, muted)
@@ -274,15 +289,15 @@ object Widgets {
                                 .toInt()
                                 .coerceAtMost(1600),
                             (116 * c.resources.displayMetrics.density).toInt(),
-                            config.optInt("color", h.color),
-                            light,
-                            config.optBoolean("gradient", false),
+                            light = light,
+                            binary = h.id in automated,
                             center = true,
                         )
                     row.setImageViewBitmap(R.id.graph, graph)
                     row.setContentDescription(
                         R.id.graph,
-                        "${h.name}: recent history, ${h.total()} total logs. Open activity.",
+                        if (h.id in automated) "${h.name}: recent completions. Open activity."
+                        else "${h.name}: recent history, ${h.total()} total logs. Open activity.",
                     )
                     row.setOnClickPendingIntent(R.id.graph, click(c, id, h.id, false))
                 }
@@ -311,4 +326,10 @@ class PinReceiver : BroadcastReceiver() {
         Store.prefs.edit().putString("widget_$id", config).apply()
         Widgets.update(c, AppWidgetManager.getInstance(c), id)
     }
+}
+
+
+internal fun Habit.widgetTodayLabel(automated: Boolean): String {
+    val count = count(Dates.today())
+    return if (!automated) "$count today" else if (count > 0) "Done today" else "Pending"
 }

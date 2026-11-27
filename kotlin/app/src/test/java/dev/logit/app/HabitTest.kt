@@ -72,3 +72,13 @@ class OfflineProjectionTest {
         org.junit.Assert.assertEquals(2L, after.count("2026-11-15"))
     }
 }
+
+class ActivityColourTest {
+    @org.junit.Test fun prefersTheFirstUnusedColour() {
+        org.junit.Assert.assertEquals(2, leastUsedColour(listOf(0, 0, 1, 3), 4))
+    }
+
+    @org.junit.Test fun reusesTheLeastUsedColourOnceThePaletteIsFull() {
+        org.junit.Assert.assertEquals(1, leastUsedColour(listOf(0, 0, 1, 2, 2, 3), 4))
+    }
+}

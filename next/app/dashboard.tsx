@@ -26,12 +26,11 @@ import {
   GripVertical,
   Moon,
   Sun,
-  ArrowLeft,
-  ArrowRight,
 } from "lucide-react";
 import { checkOpenTabReminders, setBrowserReminders } from "@/lib/reminder-browser";
 import { auth, db } from "@/lib/firebase";
-import { count, total, dayKey, change, streak, shiftDay, monday, goalProgress } from "@/lib/model.mjs";
+import { count, total, dayKey, change, streak, shiftDay, monday, goalProgress, leastUsedColour } from "@/lib/model.mjs";
+import { Introduction } from "@/components/introduction";
 import { Statistics } from "@/components/statistics";
 import { Button } from "@/components/ui/button";
 import { SkeuoButton } from "@/components/ui/skeuo-button";
@@ -246,7 +245,6 @@ export default function Dashboard() {
     [demo, setDemo] = useState(false),
     [loaded, setLoaded] = useState(false),
     [dark, setDark] = useState(true),
-    [page, setPage] = useState(0),
     [weeks, setWeeks] = useState("52"),
     [gradient, setGradient] = useState(false),
     [adding, setAdding] = useState(false),
@@ -262,6 +260,21 @@ export default function Dashboard() {
   const [period, setPeriod] = useState<"none" | Goal["period"]>("none");
   const [target, setTarget] = useState("1");
   const [statsOpen, setStatsOpen] = useState(false);
+  const [introductionOwner, setIntroductionOwner] = useState<string | null>(null);
+  const introductionKey = user ? "logit-introduction:" + user.uid : null;
+  useEffect(() => {
+    if (!introductionKey || !loaded) return;
+    let completed = false;
+    try { completed = localStorage.getItem(introductionKey) === "done"; } catch {}
+    if (!completed) setIntroductionOwner(introductionKey);
+  }, [introductionKey, loaded]);
+
+  function finishIntroduction() {
+    if (introductionKey) {
+      try { localStorage.setItem(introductionKey, "done"); } catch {}
+    }
+    setIntroductionOwner(null);
+  }
   const [remindersOpen, setRemindersOpen] = useState(false);
   const [remindersOn, setRemindersOn] = useState(false);
   const [remindersBusy, setRemindersBusy] = useState(false);
@@ -489,6 +502,7 @@ export default function Dashboard() {
         completions: [],
         dailyCounts: {},
         order: Date.now(),
+        color: leastUsedColour(habits.map((habit) => habit.color ?? 0), palette.length),
         currentStreak: 0,
         longestStreak: 0,
       };
@@ -544,8 +558,6 @@ export default function Dashboard() {
       error(e);
     }
   }
-  const pages = Math.max(1, Math.ceil(habits.length / 4));
-  const currentPage = Math.min(page, pages - 1);
   if (statsOpen) return <Statistics habits={habits} palette={palette} onBack={() => setStatsOpen(false)} />;
   return (
     <TooltipProvider>
@@ -556,7 +568,7 @@ export default function Dashboard() {
             LogIt
           </a>
           <div className="toolbar">
-            <AndroidDownload />
+            <span data-intro="android" className="inline-flex"><AndroidDownload /></span>
             <Hint label={dark ? "Use light theme" : "Use dark theme"}>
               <Button
                 variant="ghost"
@@ -627,6 +639,7 @@ export default function Dashboard() {
               </p>
             </div>
             <Button
+              data-intro="add"
               onClick={() => {
                 if (user || demo) openGoal(null);
                 else {
@@ -642,7 +655,8 @@ export default function Dashboard() {
           {(user || demo) && (
             <div className="filters">
               <Button variant="ghost" onClick={() => setStatsOpen(true)}>View statistics</Button>
-              {user && <Button variant="ghost" onClick={() => setRemindersOpen(true)}>Goal reminders</Button>}
+              {user && <Button data-intro="reminders" variant="ghost" onClick={() => setRemindersOpen(true)}>Goal reminders</Button>}
+              {user && <Button variant="ghost" onClick={() => setIntroductionOwner(introductionKey)}>Introduction</Button>}
               <Label htmlFor="timeframe">History</Label>
               <Select value={weeks} onValueChange={setWeeks}>
                 <SelectTrigger id="timeframe" className="w-36">
@@ -682,22 +696,18 @@ export default function Dashboard() {
               }}
             >
               <SortableContext
-                items={habits
-                  .slice(currentPage * 4, currentPage * 4 + 4)
-                  .map((h) => h.id)}
+                items={habits.map((h) => h.id)}
                 strategy={verticalListSortingStrategy}
               >
                 <div className="activities">
-                  {habits
-                    .slice(currentPage * 4, currentPage * 4 + 4)
-                    .map((h) => (
+                  {habits.map((h) => (
                       <SortableActivity key={h.id} id={h.id}>
                         {(sort) => (
                           <>
                             <div className="activity-heading">
                               <div>
                                 <h3>{h.name}</h3>
-                                <Button variant="ghost" size="sm" onClick={() => openGoal(h)}>
+                                <Button data-intro="goal" variant="ghost" size="sm" className="-ml-1.5 px-1.5" onClick={() => openGoal(h)}>
                                   {(() => {
                                     const progress = goalProgress(h, dayKey());
                                     return progress ? `${progress.logged} of ${progress.target} ${progress.period === "daily" ? "today" : "this week"}` : "Set goal";
@@ -782,28 +792,10 @@ export default function Dashboard() {
               </SortableContext>
             </DndContext>
           )}
-          {pages > 1 && (
-            <nav className="pagination" aria-label="Activity pages">
-              <Button
-                variant="outline"
-                disabled={currentPage === 0}
-                onClick={() => setPage(currentPage - 1)}
-              >
-                Previous
-              </Button>
-              <span>
-                {currentPage + 1} / {pages}
-              </span>
-              <Button
-                variant="outline"
-                disabled={currentPage + 1 >= pages}
-                onClick={() => setPage(currentPage + 1)}
-              >
-                Next
-              </Button>
-            </nav>
-          )}
         </>
+        {introductionKey && introductionOwner === introductionKey && (
+          <Introduction key={introductionKey} onDone={finishIntroduction} />
+        )}
         <Dialog open={authOpen} onOpenChange={setAuthOpen}>
           <DialogContent className="auth-dialog">
             <DialogHeader>

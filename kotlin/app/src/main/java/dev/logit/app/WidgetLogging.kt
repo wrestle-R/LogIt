@@ -5,7 +5,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
-import org.json.JSONObject
 
 /** A log tap writes the durable local queue; network work runs independently. */
 object WidgetLogging {
@@ -16,25 +15,20 @@ object WidgetLogging {
                 listOf(QuickWidget::class.java.name, LogGraphWidget::class.java.name)
         )
             return
-        val owner = if (Store.configured) Store.auth.currentUser?.uid else null
+        val owner = Store.trackingOwner()
         if (owner == null || habitId == null) {
             Toast.makeText(context, "Open LogIt and sign in first", Toast.LENGTH_SHORT).show()
             return
         }
-        val config =
-            runCatching { JSONObject(Store.prefs.getString("widget_$widgetId", "{}") ?: "{}") }
-                .getOrNull() ?: return
+        val config = Widgets.config(widgetId)
         if (config.optString("owner") != owner) return
-        val page = config.optInt("pageIndex", -1)
-        val selected =
-            if (page >= 0) Store.habits.drop(page * 4).take(4).map { it.id }
-            else
-                config
-                    .optJSONArray("ids")
-                    ?.let { ids -> (0 until ids.length()).map { ids.getString(it) } }
-                    .orEmpty()
+        val selected = Widgets.selectedIds(config)
         if (habitId !in selected) return
         val habit = Store.habits.find { it.id == habitId } ?: return
+        if (habit.id in PhoneTracking.automatedActivities(owner) && habit.count(Dates.today()) > 0) {
+            Toast.makeText(context, "${habit.name} already logged today", Toast.LENGTH_SHORT).show()
+            return
+        }
         Store.log(habitId, 1, expectedOwner = owner) { error ->
             Toast.makeText(
                     context,

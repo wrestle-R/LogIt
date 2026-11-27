@@ -17,6 +17,12 @@ class WidgetLayoutTest {
     @Test fun shortWidgetLimitsContentWithoutShrinkingHeatmaps() {
         assertEquals(1, WidgetLayout.fit(180, 160, 4, false).visible)
     }
+    @Test fun minimumHeatmapHeightKeepsTheSevenRowGrid() {
+        val layout = WidgetLayout.fit(180, 132, 4, false)
+        assertEquals(1, layout.visible)
+        assertTrue(layout.showGraph)
+        assertFalse(layout.showOverflow)
+    }
     @Test fun overflowHintDoesNotCrowdGraphRows() {
         val layout = WidgetLayout.fit(180, 340, 4, false)
         assertEquals(2, layout.visible)
@@ -27,5 +33,14 @@ class WidgetLayoutTest {
         assertEquals(4, layout.visible)
         assertTrue(layout.rowHeight in 60..120)
         assertEquals(1, layout.columns)
+    }
+}
+
+class WidgetOverflowRegressionTest {
+    @Test fun overflowCountsOnlyRowsThatFitFullHeatmaps() {
+        val layout = WidgetLayout.fit(300, 600, 4, false)
+        assertEquals(3, layout.visible)
+        assertTrue(layout.rowHeight >= 152)
+        assertTrue(layout.showOverflow)
     }
 }

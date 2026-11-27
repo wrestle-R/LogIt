@@ -50,7 +50,7 @@ class GoalsTest {
     @Test fun landscapeHeatmapsCanSplitAndTallHeatmapsStack() {
         val wide = WidgetLayout.fit(340, 230, 3, false)
         assertEquals(2, wide.columns)
-        val tall = WidgetLayout.fit(340, 460, 3, false)
+        val tall = WidgetLayout.fit(340, 480, 3, false)
         assertEquals(1, tall.columns)
         assertEquals(3, tall.visible)
     }

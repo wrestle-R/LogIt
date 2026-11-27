@@ -23,7 +23,9 @@ import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal data class AppLogRule(val activityId: String, val app: UsageApp, val minutes: Int, val since: Long)
+internal data class AppLogRule(val activityId: String, val app: UsageApp, val minutes: Int, val since: Long) {
+    val triggerLabel: String get() = if (minutes == 0) "Opened" else "${formatUsageMinutes(minutes)} a day"
+}
 internal data class ScreenLimit(
     val id: String,
     val name: String,
@@ -101,7 +103,7 @@ internal object PhoneTracking {
         }
         editor.remove(key(owner, "last-check")).apply()
         schedule()
-        SleepWidget.refresh(Store.context)
+        Widgets.refresh(Store.context)
     }
 
     fun appRules(owner: String): List<AppLogRule> {
@@ -120,6 +122,7 @@ internal object PhoneTracking {
         Store.prefs.edit().putString(key(owner, "app-rules"), JSONArray(values).toString())
             .remove(key(owner, "last-check")).apply()
         schedule()
+        Widgets.refresh(Store.context)
     }
 
     fun limits(owner: String): List<ScreenLimit> {
@@ -140,6 +143,14 @@ internal object PhoneTracking {
         Store.prefs.edit().putString(key(owner, "limits"), JSONArray(values).toString())
             .remove(key(owner, "last-check")).apply()
         schedule()
+        Widgets.refresh(Store.context)
+    }
+
+    fun automatedActivities(owner: String): Set<String> = buildSet {
+        sleep(owner)?.let { add(it.activityId) }
+        addAll(appRules(owner).map { it.activityId })
+        addAll(limits(owner).mapNotNull { it.activityId })
+        addAll(HealthMetric.entries.mapNotNull { HealthTracking.rule(owner, it)?.activityId })
     }
 
     fun reading(owner: String, limitId: String, yesterday: Boolean = false): ScreenReading? {
@@ -197,7 +208,7 @@ internal object PhoneTracking {
     private fun startOf(day: LocalDate) = day.atStartOfDay(Dates.zone).toInstant().toEpochMilli()
     private fun minutes(milliseconds: Long) = TimeUnit.MILLISECONDS.toMinutes(milliseconds).toInt()
 
-    fun run(context: Context) = synchronized(processing) {
+    fun run(context: Context, onReturn: Boolean = false) = synchronized(processing) {
         val owner = Store.trackingOwner() ?: return@synchronized
         if (!automaticEnabled(owner)) return@synchronized
         val sleep = sleep(owner)?.takeIf { it.estimateFromPhone }
@@ -206,7 +217,7 @@ internal object PhoneTracking {
         if (sleep == null && rules.isEmpty() && limits.isEmpty()) return@synchronized
         val last = Store.prefs.getLong(key(owner, "last-check"), 0)
         val end = now()
-        if (end - last in 0 until 10_000L) return@synchronized
+        if (!onReturn && end - last in 0 until 10_000L) return@synchronized
         if (!AndroidUsage.allowed(context)) {
             // A day with a known break in access does not qualify as an under-limit day.
             Store.prefs.edit().remove(key(owner, "access-since")).apply()
@@ -230,7 +241,7 @@ internal object PhoneTracking {
             val dayKey = day.toString()
             for (rule in rules) {
                 val ruleStart = maxOf(start, rule.since, accessSince)
-                if (ruleStart < stop && minutes(timeline.timeUsed(ruleStart, stop, setOf(rule.app.id))) >= rule.minutes) {
+                if (ruleStart < stop && timeline.meetsAppRule(rule.app.id, rule.minutes, ruleStart, stop)) {
                     main.post {
                         if (automaticEnabled(owner) && rule in appRules(owner)) enqueueLog(owner, rule.activityId, dayKey)
                     }
@@ -278,7 +289,10 @@ internal object PhoneTracking {
     }
 
     private fun enqueueLog(owner: String, activity: String, day: String) {
-        if (Store.trackingOwner() == owner) Store.logAutomatic(activity, day, owner) { }
+        val habit = Store.habitsFor(owner).firstOrNull { it.id == activity } ?: return
+        if (OfflineLogQueue.automaticOp(owner, habit, day).id !in habit.appliedOps) {
+            Store.logAutomatic(activity, day, owner) { }
+        }
     }
 
     private fun pending(owner: String, id: String) = json(owner, "pending-sleep:$id")

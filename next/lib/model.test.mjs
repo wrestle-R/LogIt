@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { count, change, total, dayKey, streak, goalProgress, monday, activityStats, reminderProgress } from "./model.mjs";
+import { count, change, total, dayKey, streak, goalProgress, monday, activityStats, reminderProgress, leastUsedColour } from "./model.mjs";
 test("legacy days start at one and repeated logs preserve unique dates", () => {
   const next = change({ completions: ["2026-11-14"] }, "2026-11-14", 1);
   assert.equal(count(next, "2026-11-14"), 2);
@@ -49,4 +49,9 @@ test("reminders skip goals that are met, not started, or still have days left", 
   assert.equal(reminderProgress(habit, "2026-11-28"), null);
   assert.equal(reminderProgress(habit, "2026-11-29").logged, 2);
   assert.equal(reminderProgress(change(habit, "2026-11-23", 1), "2026-11-29"), null);
+});
+
+test("new activities take an unused colour, then a least-used colour", () => {
+  assert.equal(leastUsedColour([0, 1, 3, 3], 4), 2);
+  assert.equal(leastUsedColour([0, 0, 1, 2, 2, 3], 4), 1);
 });
